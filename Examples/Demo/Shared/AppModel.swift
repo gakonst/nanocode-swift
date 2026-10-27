@@ -159,6 +159,7 @@ final class AppModel {
     do {
       let session = try await runtime.open(configuration(id: id, provider: provider, model: model, thinking: thinking))
       let chat = Chat()
+      chat.workspace = machines.isEmpty ? workspace : nil
       self.chat = chat
       selection = id
       await chat.attach(session)

@@ -8,6 +8,8 @@ public struct ComposerView: View {
   @State private var text = ""
   @State private var images: [String] = []
   @State private var picked: [PhotosPickerItem] = []
+  @State private var files: [URL] = []
+  @State private var importing = false
   @FocusState private var focused: Bool
   @Environment(\.nanocodeTheme) private var theme
 
@@ -17,13 +19,15 @@ public struct ComposerView: View {
     self.allowsImages = allowsImages
   }
 
-  var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
+  var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty || !files.isEmpty }
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if !images.isEmpty { attachments }
+      if !files.isEmpty { fileList }
       HStack(alignment: .bottom, spacing: 8) {
         if allowsImages { picker }
+        if chat.workspace != nil { importer }
         field
         button
       }
@@ -53,6 +57,26 @@ public struct ComposerView: View {
     }
     .buttonStyle(.plain)
     .padding(2)
+  }
+
+  var fileList: some View {
+    HStack {
+      ForEach(files, id: \.self) { file in
+        Label(file.lastPathComponent, systemImage: "doc").font(.body(theme.bodySize - 3)).foregroundStyle(theme.muted)
+      }
+      Button { files = [] } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(theme.muted) }.buttonStyle(.plain)
+    }
+  }
+
+  var importer: some View {
+    Button { importing = true } label: {
+      Image(systemName: "paperclip").font(.system(size: 16)).foregroundStyle(theme.muted)
+    }
+    .buttonStyle(.plain)
+    .padding(.bottom, 6)
+    .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+      if case .success(let urls) = result { files.append(contentsOf: urls) }
+    }
   }
 
   var picker: some View {
@@ -110,9 +134,11 @@ public struct ComposerView: View {
     guard canSend else { return }
     let prompt = text
     let attached = images
+    let documents = files
     text = ""
     images = []
-    Task { await chat.send(prompt, images: attached) }
+    files = []
+    Task { await chat.send(prompt, images: attached, files: documents) }
   }
 
   func stop() {

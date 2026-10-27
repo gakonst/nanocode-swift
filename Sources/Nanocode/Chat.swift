@@ -11,6 +11,7 @@ public final class Chat {
   public private(set) var session: Session?
   public private(set) var loading = false
   public private(set) var waiting: String?
+  public var workspace: URL?
   @ObservationIgnored private var requests: [String] = []
   @ObservationIgnored private var local = Set<String>()
   @ObservationIgnored private let transcript: Transcript
@@ -68,8 +69,40 @@ public final class Chat {
     driving = false
   }
 
-  public func send(_ text: String, images: [String] = []) async {
+  public func attach(_ files: [URL]) throws -> [String] {
+    guard let workspace else { throw NanocodeError("this chat has no workspace to attach files to") }
+    let uploads = workspace.appendingPathComponent("uploads", isDirectory: true)
+    try FileManager.default.createDirectory(at: uploads, withIntermediateDirectories: true)
+    return try files.map { file in
+      let scoped = file.startAccessingSecurityScopedResource()
+      defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+      var target = uploads.appendingPathComponent(file.lastPathComponent)
+      var index = 2
+      while FileManager.default.fileExists(atPath: target.path) {
+        let stem = file.deletingPathExtension().lastPathComponent
+        let suffix = file.pathExtension.isEmpty ? "" : ".\(file.pathExtension)"
+        target = uploads.appendingPathComponent("\(stem)-\(index)\(suffix)")
+        index += 1
+      }
+      try FileManager.default.copyItem(at: file, to: target)
+      let size = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int) ?? 0
+      let kind = target.pathExtension.isEmpty ? "file" : target.pathExtension
+      return "Attached: \(target.path) (\(kind), \(Format.bytes(size)))"
+    }
+  }
+
+  public func send(_ text: String, images: [String] = [], files: [URL] = []) async {
     guard let session else { return }
+    var text = text
+    if !files.isEmpty {
+      do {
+        let lines = try attach(files)
+        text = text.isEmpty ? lines.joined(separator: "\n") : text + "\n\n" + lines.joined(separator: "\n")
+      } catch {
+        self.error = error.localizedDescription
+        return
+      }
+    }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || !images.isEmpty else { return }
     error = nil

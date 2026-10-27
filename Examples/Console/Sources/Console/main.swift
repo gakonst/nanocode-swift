@@ -1,7 +1,23 @@
 import Foundation
 import Nanocode
 
+setbuf(stdout, nil)
+
 let arguments = CommandLine.arguments.dropFirst()
+if arguments.first == "wallet" {
+  let runtime = try NanocodeRuntime(dataDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console-wallet", isDirectory: true))
+  let events = runtime.events
+  Task {
+    for await event in events {
+      if case .walletPrompt(let prompt) = event {
+        print("[wallet] approve \(prompt.userCode) at \(prompt.verificationURIComplete ?? prompt.verificationURI)")
+      }
+    }
+  }
+  let record = try await Wallet(runtime: runtime).connect(name: "nanocode console", website: "https://nanocode.xyz")
+  print("[wallet] connected \(record.account) with key \(record.keyAddress)")
+  exit(0)
+}
 if arguments.first == "hand" || arguments.first == "runner" {
   let values = Array(arguments.dropFirst())
   guard values.count >= 2 else {

@@ -3,7 +3,13 @@ import SwiftUI
 
 @main
 struct DemoApp: App {
-  @State private var model = AppModel()
+  private let model: AppModel
+
+  init() {
+    let model = AppModel()
+    self.model = model
+    Task { await model.start() }
+  }
 
   var body: some Scene {
     main
@@ -23,7 +29,6 @@ struct DemoApp: App {
         .environment(model)
         .nanocodeTheme(.nanocode)
         .tint(NanocodeTheme.nanocode.accent)
-        .task { await model.start() }
     }
     #if os(macOS)
     .defaultSize(width: 1100, height: 760)

@@ -56,7 +56,45 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Attach photos to a message.
         TARGETED_DEVICE_FAMILY: "1,2"
+  NanocodeUIKit-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - UIKit
+    dependencies:
+      - package: Nanocode
+        product: NanocodeUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo.uikit
+        PRODUCT_NAME: NanocodeUIKit
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Attach photos to a message.
+        TARGETED_DEVICE_FAMILY: "1,2"
+  NanocodeAppKit-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - AppKit
+    dependencies:
+      - package: Nanocode
+        product: NanocodeUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo.appkit
+        PRODUCT_NAME: NanocodeAppKit
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_ENTITLEMENTS: macOS/Nanocode.entitlements
 schemes:
+  NanocodeUIKit-iOS:
+    build:
+      targets:
+        NanocodeUIKit-iOS: all
+  NanocodeAppKit-macOS:
+    build:
+      targets:
+        NanocodeAppKit-macOS: all
   NanocodeDemo-macOS:
     build:
       targets:

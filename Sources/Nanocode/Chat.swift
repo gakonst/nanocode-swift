@@ -92,7 +92,10 @@ public final class Chat {
   }
 
   public func send(_ text: String, images: [String] = [], files: [URL] = []) async {
-    guard let session else { return }
+    guard let session else {
+      error = "No session is open."
+      return
+    }
     var text = text
     if !files.isEmpty {
       do {
@@ -159,9 +162,6 @@ public final class Chat {
   private func applied(_ event: LiveEvent) {
     if event.type == "turn", let request = event.requestID {
       requests.removeAll { $0 == request }
-    }
-    if event.type == "user", let request = event.requestID, !requests.contains(request), !local.contains(request) {
-      return
     }
   }
 }

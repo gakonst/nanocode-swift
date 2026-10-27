@@ -7,3 +7,4 @@ output/
 target/
 xcuserdata/
 Examples/Demo/NanocodeDemo.xcodeproj/
+target-check/

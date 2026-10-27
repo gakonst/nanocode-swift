@@ -22,6 +22,10 @@ use mpp::{
 };
 use nanocode::{
     ClaudeModel, Model, Tool,
+    codex::transport::host::{
+        ConnectedHost, HostConnectRequest, HostError, HostFuture, HostHttpResponse, HostTransport,
+        send_http,
+    },
     http::{self as layer, BoxFuture, Event, EventHook, Layer, Next},
 };
 use nanocode_mcp_tools::{
@@ -550,6 +554,54 @@ impl Exchange for NextExchange<'_> {
             .map_err(|error| layer::Error::new(error.to_string()))?;
         *response.headers_mut() = headers;
         Ok(response.into())
+    }
+}
+
+pub struct Transport<L> {
+    layer: L,
+    client: reqwest::Client,
+}
+
+impl<L: Layer> Transport<L> {
+    pub fn new(layer: L) -> Self {
+        Self {
+            layer,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+struct Layered<'a, L> {
+    layer: &'a L,
+    client: &'a reqwest::Client,
+}
+
+impl<L: Layer> layer::Sender for Layered<'_, L> {
+    fn send(&self, request: layer::Request) -> BoxFuture<'_, Result<layer::Response, layer::Error>> {
+        Box::pin(async move {
+            let sender = nanocode_http::ReqwestSender::new(self.client);
+            self.layer.send(request, Next::new(&sender)).await
+        })
+    }
+}
+
+impl<L: Layer> HostTransport for Transport<L> {
+    fn connect<'a>(&'a self, _request: HostConnectRequest<'a>) -> HostFuture<'a, Result<ConnectedHost, HostError>> {
+        Box::pin(async { Err(HostError::new("this host sends web search requests over HTTPS only")) })
+    }
+
+    fn http<'a>(&'a self, request: HostConnectRequest<'a>, body: &'a str) -> HostFuture<'a, Result<HostHttpResponse, HostError>> {
+        Box::pin(async move {
+            let sender = Layered {
+                layer: &self.layer,
+                client: &self.client,
+            };
+            send_http(&sender, request, body).await
+        })
+    }
+
+    fn sleep<'a>(&'a self, _session_id: &'a str, duration: Duration) -> HostFuture<'a, ()> {
+        Box::pin(tokio::time::sleep(duration))
     }
 }
 

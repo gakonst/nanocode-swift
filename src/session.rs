@@ -216,6 +216,11 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         for tool in &shared {
             tools = tools.add_shared_tool(Arc::clone(tool)).map_err(text)?;
         }
+        if config.web_search
+            && let Some(search) = crate::config::codex_web_search(&config, &host.payments)?
+        {
+            tools = tools.add_shared_tool(search).map_err(text)?;
+        }
         let environment = config.codex_environment();
         let mut harness = CodexHarness::new(client)
             .configure(move |codex| {

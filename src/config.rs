@@ -313,6 +313,31 @@ pub fn codex_client(
         .map_err(|error| error.to_string())
 }
 
+pub fn codex_web_search(
+    config: &Configuration,
+    payments: &crate::payments::Payments,
+) -> Result<Option<Arc<dyn nanocode::Tool>>, String> {
+    let base = config
+        .endpoint
+        .clone()
+        .unwrap_or_else(|| match config.auth {
+            Auth::Tempo => Service::OpenAi.url().to_owned(),
+            _ => OPENAI_API.to_owned(),
+        });
+    let transport: Arc<dyn nanocode::codex::transport::host::HostTransport> = match &config.auth {
+        Auth::Tempo => Arc::new(crate::payments::Transport::new(payments.layer(Service::OpenAi, &base)?)),
+        Auth::Headers(headers) => Arc::new(crate::payments::Transport::new(crate::payments::Headers(header_map(headers)?))),
+        Auth::ApiKey(key) => {
+            let mut headers = http::HeaderMap::new();
+            let mut value = http::HeaderValue::from_str(&format!("Bearer {key}")).map_err(|error| error.to_string())?;
+            value.set_sensitive(true);
+            headers.insert(http::header::AUTHORIZATION, value);
+            Arc::new(crate::payments::Transport::new(crate::payments::Headers(headers)))
+        }
+    };
+    Ok(Some(Arc::new(nanocode::codex_tools::web_search_tool(&base, None, transport))))
+}
+
 fn messages_url(base: &str) -> String {
     let base = base.trim_end_matches('/');
     if base.ends_with("/messages") {

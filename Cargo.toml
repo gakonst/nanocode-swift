@@ -24,6 +24,7 @@ nanocode-sync = { path = "../nanocodex/crates/core/sync" }
 nanocode-process-contracts = { path = "../nanocodex/crates/core/process" }
 nanocode-tool-runtime = { path = "../nanocodex/crates/integrations/tool-runtime" }
 nanocode-mcp-tools = { path = "../nanocodex/crates/integrations/mcp-tools" }
+nanocode-http = { path = "../nanocodex/crates/core/http" }
 mpp = { version = "0.17.1", default-features = false, features = ["client", "tempo", "sqlite", "reqwest-rustls-tls-no-provider"] }
 async-trait = "0.1.89"
 base64 = "0.22"

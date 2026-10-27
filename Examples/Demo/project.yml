@@ -1,0 +1,71 @@
+name: NanocodeDemo
+options:
+  bundleIdPrefix: xyz.nanocode
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  Nanocode:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+targets:
+  NanocodeDemo-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - Shared
+      - macOS
+    dependencies:
+      - package: Nanocode
+        product: NanocodeUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
+        PRODUCT_NAME: Nanocode
+        PRODUCT_MODULE_NAME: NanocodeDemo
+        INFOPLIST_KEY_CFBundleDisplayName: Nanocode
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_ENTITLEMENTS: macOS/Nanocode.entitlements
+  NanocodeDemo-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - Shared
+      - iOS
+    dependencies:
+      - package: Nanocode
+        product: NanocodeUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
+        PRODUCT_NAME: Nanocode
+        PRODUCT_MODULE_NAME: NanocodeDemo
+        INFOPLIST_KEY_CFBundleDisplayName: Nanocode
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Attach photos to a message.
+        TARGETED_DEVICE_FAMILY: "1,2"
+schemes:
+  NanocodeDemo-macOS:
+    build:
+      targets:
+        NanocodeDemo-macOS: all
+    run:
+      config: Debug
+  NanocodeDemo-iOS:
+    build:
+      targets:
+        NanocodeDemo-iOS: all
+    run:
+      config: Debug

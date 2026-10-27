@@ -1,8 +1,8 @@
-target/
+*.xcuserstate
+.build/
+.swiftpm/
+DerivedData/
 build/
 output/
-.build/
-DerivedData/
-*.xcuserstate
+target/
 xcuserdata/
-.swiftpm/

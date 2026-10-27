@@ -1,0 +1,129 @@
+import Foundation
+import NanocodeUI
+import Observation
+
+enum Access: String, CaseIterable, Identifiable {
+  case tempo
+  case keys
+  var id: String { rawValue }
+  var label: String { self == .tempo ? "Tempo Wallet (MPP)" : "API keys" }
+}
+
+@MainActor
+@Observable
+final class AppModel {
+  static let instructions = """
+    You are the nanocode demo running natively inside an app on the user's \(AppModel.platform). \
+    Code Mode cells run in QuickJS on this device, and device tools (device_info, open_url, clipboard, speak) act on it. \
+    Keep answers short and show your work with tools when it helps.
+    """
+
+  static var platform: String {
+    #if os(macOS)
+    "Mac"
+    #else
+    "iPhone or iPad"
+    #endif
+  }
+
+  let runtime: NanocodeRuntime
+  let wallet: WalletMonitor
+  let hand: HandMonitor
+  var catalog: ModelCatalog?
+  var conversations: [SessionSummary] = []
+  var selection: String?
+  var chat = Chat()
+  var provider: Provider = .codex
+  var model = "gpt-6-luna"
+  var thinking = "low"
+  var access: Access = .tempo
+  var anthropicKey = AppModel.secret("anthropic")
+  var openaiKey = AppModel.secret("openai")
+  var error: String?
+  var opening = false
+
+  init() {
+    do {
+      runtime = try NanocodeRuntime.standard(named: "Nanocode Demo")
+    } catch {
+      fatalError("the nanocode runtime did not start: \(error)")
+    }
+    wallet = WalletMonitor(runtime: runtime, name: "nanocode for \(AppModel.platform)", website: "https://nanocode.xyz")
+    hand = HandMonitor(runtime: runtime)
+    if let saved = UserDefaults.standard.string(forKey: "access").flatMap(Access.init(rawValue:)) { access = saved }
+  }
+
+  var workspace: URL { runtime.dataDirectory.appendingPathComponent("workspace", isDirectory: true) }
+
+  static func secret(_ name: String) -> String {
+    Keychain.load(service: "xyz.nanocode.demo.keys", account: name).map { String(decoding: $0, as: UTF8.self) } ?? ""
+  }
+
+  func saveKeys() {
+    for (name, value) in [("anthropic", anthropicKey), ("openai", openaiKey)] {
+      if value.isEmpty { Keychain.remove(service: "xyz.nanocode.demo.keys", account: name) }
+      else { try? Keychain.save(Data(value.utf8), service: "xyz.nanocode.demo.keys", account: name) }
+    }
+    UserDefaults.standard.set(access.rawValue, forKey: "access")
+  }
+
+  func start() async {
+    catalog = try? await runtime.models()
+    await wallet.restore()
+    await refresh()
+    if let first = conversations.first { await open(first) } else { await newChat() }
+  }
+
+  func refresh() async {
+    conversations = (try? await runtime.sessions())?.filter { $0.preview != nil || $0.id == selection } ?? []
+  }
+
+  func authentication(for provider: Provider) -> Authentication {
+    switch access {
+    case .tempo: return .tempo
+    case .keys: return .apiKey(provider == .claude ? anthropicKey : openaiKey)
+    }
+  }
+
+  func configuration(id: String, provider: Provider, model: String, thinking: String?) -> SessionConfiguration {
+    SessionConfiguration(
+      sessionID: id, provider: provider, model: model, thinking: thinking, instructions: Self.instructions,
+      authentication: authentication(for: provider), workspace: workspace, tools: DemoTools.all,
+      environment: SessionEnvironment(cwd: workspace.path))
+  }
+
+  func newChat() async {
+    await open(id: Identifier.uuidv7(), provider: provider, model: model, thinking: thinking)
+  }
+
+  func open(_ summary: SessionSummary) async {
+    let family = Provider(rawValue: summary.family) ?? .claude
+    await open(id: summary.id, provider: family, model: summary.model, thinking: nil)
+  }
+
+  func open(id: String, provider: Provider, model: String, thinking: String?) async {
+    opening = true
+    defer { opening = false }
+    error = nil
+    do {
+      let session = try await runtime.open(configuration(id: id, provider: provider, model: model, thinking: thinking))
+      let chat = Chat()
+      self.chat = chat
+      selection = id
+      await chat.attach(session)
+      await refresh()
+    } catch {
+      self.error = error.localizedDescription
+    }
+  }
+
+  func delete(_ summary: SessionSummary) async {
+    try? await runtime.command("close", ["session": .string(summary.id)])
+    conversations.removeAll { $0.id == summary.id }
+  }
+
+  func setThinking(_ thinking: String) async {
+    self.thinking = thinking
+    try? await chat.session?.settings(thinking: thinking)
+  }
+}

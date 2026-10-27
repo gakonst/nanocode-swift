@@ -100,6 +100,12 @@ public final class HandMonitor {
           self.running = false
           self.state = .stopped(error: error)
           self.poller?.cancel()
+        case .runner(let runner, let event) where runner == self.id:
+          let next = HandState(event)
+          if next != .idle { self.state = next }
+        case .runnerStopped(let runner, let error) where runner == self.id:
+          self.running = false
+          self.state = .stopped(error: error)
         default: break
         }
       }
@@ -120,8 +126,22 @@ public final class HandMonitor {
     }
   }
 
+  public func start(runner configuration: RunnerConfiguration) async {
+    var configuration = configuration
+    configuration.id = id
+    error = nil
+    do {
+      _ = try await runtime.startRunner(configuration)
+      running = true
+      state = .connecting
+    } catch {
+      self.error = error.localizedDescription
+    }
+  }
+
   public func stop() async {
     poller?.cancel()
+    try? await runtime.stopRunner(id)
     try? await runtime.stopHand(id)
     running = false
     state = .idle

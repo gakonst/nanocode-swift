@@ -44,6 +44,8 @@ public struct DevicePrompt: Sendable, Hashable {
 public enum RuntimeEvent: Sendable {
   case hand(id: String, event: JSON)
   case handStopped(id: String, error: String?)
+  case runner(id: String, event: JSON)
+  case runnerStopped(id: String, error: String?)
   case walletPrompt(DevicePrompt)
   case payments(JSON)
   case notice(String)
@@ -172,6 +174,12 @@ final class Router: @unchecked Sendable {
         broadcast(.handStopped(id: id, error: hand["stopped"]?.string))
       } else if let event = hand["event"] {
         broadcast(.hand(id: id, event: event))
+      }
+    } else if let runner = object["runner"], let id = runner["id"]?.string {
+      if runner.object?.keys.contains("stopped") == true {
+        broadcast(.runnerStopped(id: id, error: runner["stopped"]?.string))
+      } else if let event = runner["event"] {
+        broadcast(.runner(id: id, event: event))
       }
     } else if let wallet = object["wallet"], let prompt = wallet["prompt"],
               let code = prompt["user_code"]?.string, let uri = prompt["verification_uri"]?.string.flatMap(URL.init(string:)) {

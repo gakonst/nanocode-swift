@@ -17,6 +17,7 @@ use crate::{
     command::{self, Command},
     hand::Hands,
     payments::Payments,
+    runner::Runners,
     session::{Sessions, Storage},
 };
 
@@ -55,6 +56,7 @@ pub struct Host {
     pub storage: OnceCell<Arc<Storage>>,
     pub sessions: Sessions,
     pub hands: Hands,
+    pub runners: Runners,
     pub payments: Payments,
 }
 
@@ -155,6 +157,7 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         storage: OnceCell::new(),
         sessions: Sessions::default(),
         hands: Hands::default(),
+        runners: Runners::default(),
         payments,
     });
     host.payments.attach(&host);
@@ -251,6 +254,7 @@ pub unsafe extern "C" fn nanocode_stop(handle: *mut Handle) {
     let host = Arc::clone(&handle.host);
     handle.runtime.block_on(async move {
         host.hands.stop_all().await;
+        host.runners.stop_all().await;
         host.sessions.close_all().await;
     });
     handle

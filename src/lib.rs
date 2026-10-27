@@ -7,6 +7,7 @@ mod config;
 mod files;
 mod hand;
 mod payments;
+mod runner;
 mod session;
 mod tools;
 mod wallet;

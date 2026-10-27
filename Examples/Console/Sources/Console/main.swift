@@ -2,6 +2,37 @@ import Foundation
 import Nanocode
 
 let arguments = CommandLine.arguments.dropFirst()
+if arguments.first == "hand" || arguments.first == "runner" {
+  let values = Array(arguments.dropFirst())
+  guard values.count >= 2 else {
+    print("usage: Console hand|runner <url> <token> [name]")
+    exit(2)
+  }
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console-hand", isDirectory: true)
+  let runtime = try NanocodeRuntime(dataDirectory: directory)
+  let events = runtime.events
+  let clock = HostTool(
+    name: "clock",
+    description: "Returns the current date and time on the device that runs this hand.",
+    parameters: ["type": "object", "properties": [:], "additionalProperties": false]
+  ) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
+  if arguments.first == "hand" {
+    let status = try await runtime.startHand(HandConfiguration(url: values[0], token: values[1], name: values.count > 2 ? values[2] : "console", tools: [clock]))
+    print("[hand] \(status?.directory ?? "")")
+  } else {
+    print("[runner] \(try await runtime.startRunner(RunnerConfiguration(url: values[0], token: values[1], tools: [clock])).text())")
+  }
+  for await event in events {
+    switch event {
+    case .hand(_, let event), .runner(_, let event): print("[event] \(event.text())")
+    case .handStopped(_, let error), .runnerStopped(_, let error):
+      print("[stopped] \(error ?? "")")
+      exit(0)
+    default: break
+    }
+  }
+  exit(0)
+}
 let provider = Provider(rawValue: ProcessInfo.processInfo.environment["NANOCODE_PROVIDER"] ?? "claude") ?? .claude
 let model = ProcessInfo.processInfo.environment["NANOCODE_MODEL"]
 let prompt = arguments.joined(separator: " ").isEmpty ? "Say hi in five words." : arguments.joined(separator: " ")

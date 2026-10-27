@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{bridge::Host, config::Configuration, hand, session, wallet};
+use crate::{bridge::Host, config::Configuration, hand, runner, session, wallet};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +98,11 @@ pub enum Command {
         id: String,
     },
     HandStatus {},
+    RunnerStart(Box<runner::Start>),
+    RunnerStop {
+        id: String,
+    },
+    RunnerStatus {},
     WalletConnect(wallet::Meta),
     WalletUse(wallet::Record),
     WalletCli {},
@@ -218,6 +223,9 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
         Command::HandStart(start) => hand::start(host, *start).await,
         Command::HandStop { id } => Ok(hand::stop(host, &id)),
         Command::HandStatus {} => Ok(hand::status(host)),
+        Command::RunnerStart(start) => runner::start(host, *start).await,
+        Command::RunnerStop { id } => runner::stop(host, &id).await,
+        Command::RunnerStatus {} => Ok(runner::statuses(host)),
         Command::WalletConnect(meta) => wallet::connect(host, meta).await,
         Command::WalletUse(record) => wallet::install(&host.payments, &record),
         Command::WalletCli {} => wallet::install_cli(&host.payments),

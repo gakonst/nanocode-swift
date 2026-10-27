@@ -47,6 +47,8 @@ public enum HandState: Sendable, Hashable {
     case "revoked": self = .stopped(error: "The brain revoked this hand.")
     case "replaced": self = .stopped(error: "Another process took this hand's place.")
     case "rejected": self = .stopped(error: "The brain refused the hand (HTTP \(event["status"]?.int ?? 0)).")
+    case "fenced": self = .stopped(error: "The brain fenced this runner: \(event["reason"]?.string ?? "")")
+    case "catalog", "call_started", "call_completed": self = .connected(endpoint: "")
     default: self = .idle
     }
   }
@@ -109,7 +111,71 @@ public struct HandConfiguration: Sendable {
   }
 }
 
+public struct RunnerMachine: Sendable {
+  public var id: String
+  public var name: String
+  public var workspace: String?
+  public var capabilities: [String]
+
+  public init(id: String, name: String, workspace: String? = nil, capabilities: [String] = ["shell"]) {
+    self.id = id
+    self.name = name
+    self.workspace = workspace
+    self.capabilities = capabilities
+  }
+
+  var json: JSON {
+    var object: [String: JSON] = ["id": .string(id), "name": .string(name), "capabilities": .array(capabilities.map(JSON.string))]
+    if let workspace { object["workspace"] = .string(workspace) }
+    return .object(object)
+  }
+}
+
+public struct RunnerConfiguration: Sendable {
+  public var id: String
+  public var url: String
+  public var token: String
+  public var machine: RunnerMachine?
+  public var workspace: URL?
+  public var shell: Bool?
+  public var tools: [HostTool]
+
+  public init(id: String = "default", url: String, token: String, machine: RunnerMachine? = nil, workspace: URL? = nil,
+              shell: Bool? = nil, tools: [HostTool] = []) {
+    self.id = id
+    self.url = url
+    self.token = token
+    self.machine = machine
+    self.workspace = workspace
+    self.shell = shell
+    self.tools = tools
+  }
+
+  var json: JSON {
+    var object: [String: JSON] = [
+      "id": .string(id), "url": .string(url), "token": .string(token), "tools": .array(tools.map(\.definition)),
+    ]
+    if let machine { object["machine"] = machine.json }
+    if let workspace { object["workspace"] = .string(workspace.path) }
+    if let shell { object["shell"] = .bool(shell) }
+    return .object(object)
+  }
+}
+
 public extension NanocodeRuntime {
+  func startRunner(_ configuration: RunnerConfiguration) async throws -> JSON {
+    register(configuration.tools)
+    return try await command("runner_start", configuration.json)
+  }
+
+  func stopRunner(_ id: String = "default") async throws {
+    try await command("runner_stop", ["id": .string(id)])
+  }
+
+  func runners() async throws -> [JSON] {
+    (try await command("runner_status")).array ?? []
+  }
+
   func startHand(_ configuration: HandConfiguration) async throws -> HandStatus? {
     register(configuration.tools)
     return HandStatus(try await command("hand_start", configuration.json))

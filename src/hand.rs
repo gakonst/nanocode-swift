@@ -84,6 +84,14 @@ fn file_tools(directory: &Path) -> Result<Tools, String> {
     merge(claude, codex)
 }
 
+pub fn workspace_tools(directory: &Path, shell: Option<bool>) -> Result<Tools, String> {
+    if shell.unwrap_or(cfg!(target_os = "macos")) && cfg!(target_os = "macos") {
+        nanocode::hand::tools(directory.to_path_buf()).map_err(text)
+    } else {
+        file_tools(directory)
+    }
+}
+
 fn event(event: HandEvent) -> Value {
     match event {
         HandEvent::Connecting { endpoint } => json!({"state": "connecting", "endpoint": endpoint}),
@@ -111,12 +119,7 @@ pub async fn start(host: &Arc<Host>, start: Start) -> Result<Value, String> {
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let shell = start.shell.unwrap_or(cfg!(target_os = "macos")) && cfg!(target_os = "macos");
-    let mut tools = if shell {
-        nanocode::hand::tools(directory.clone()).map_err(text)?
-    } else {
-        file_tools(&directory)?
-    };
+    let mut tools = workspace_tools(&directory, start.shell)?;
     for tool in crate::tools::tools(host, start.tools) {
         tools = tools
             .add_shared_tool(Arc::new(tool) as Arc<dyn Tool>)

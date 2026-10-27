@@ -134,7 +134,7 @@ public struct ChatView<Empty: View>: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      TranscriptView(chat: chat) { empty }
+      TranscriptView(chat.state) { empty }
       ComposerView(chat: chat, placeholder: placeholder)
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
@@ -146,5 +146,11 @@ public struct ChatView<Empty: View>: View {
 public extension ChatView where Empty == EmptyView {
   init(chat: Chat, placeholder: String = "Ask anything") {
     self.init(chat: chat, placeholder: placeholder) { EmptyView() }
+  }
+}
+
+public extension Chat {
+  var state: TranscriptState {
+    TranscriptState(entries: entries, live: live, pending: pending, error: error, waiting: waiting)
   }
 }

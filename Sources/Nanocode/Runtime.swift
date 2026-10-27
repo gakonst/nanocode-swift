@@ -1,4 +1,5 @@
 import Foundation
+@_exported import NanocodeCore
 import NanocodeFFI
 import os
 
@@ -6,22 +7,6 @@ public struct NanocodeError: LocalizedError, Sendable, Equatable {
   public let message: String
   public init(_ message: String) { self.message = message }
   public var errorDescription: String? { message }
-}
-
-public struct LoggedEvent: Sendable, Hashable, Identifiable {
-  public let seq: UInt64
-  public let requestID: String?
-  public let createdAt: Double
-  public let event: JSON
-  public var id: String { seq > 0 ? "\(seq)" : "live:\(requestID ?? ""):\(event.text())" }
-
-  init?(_ json: JSON) {
-    guard let event = json["event"] else { return nil }
-    seq = json["seq"]?.uint64 ?? 0
-    requestID = json["request_id"]?.string
-    createdAt = json["created_at"]?.number ?? Date().timeIntervalSince1970 * 1000
-    self.event = event
-  }
 }
 
 public enum SessionEvent: Sendable {

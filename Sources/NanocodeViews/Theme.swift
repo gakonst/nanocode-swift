@@ -1,5 +1,5 @@
 import SwiftUI
-@_exported import Nanocode
+@_exported import NanocodeCore
 
 public struct NanocodeTheme: Sendable {
   public var foreground: Color
@@ -70,12 +70,12 @@ public extension View {
   }
 }
 
-extension Font {
+public extension Font {
   static func body(_ size: CGFloat, weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight) }
   static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight, design: .monospaced) }
 }
 
-extension View {
+public extension View {
   func lineHeight(_ multiple: CGFloat, size: CGFloat) -> some View {
     lineSpacing(max(0, size * (multiple - 1.2)))
   }

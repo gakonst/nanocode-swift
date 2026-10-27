@@ -356,8 +356,8 @@ struct TableCard: View {
   }
 }
 
-enum Pasteboard {
-  static func copy(_ text: String) {
+public enum Pasteboard {
+  public static func copy(_ text: String) {
     #if os(macOS)
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)

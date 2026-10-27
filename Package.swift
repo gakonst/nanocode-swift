@@ -16,14 +16,18 @@ let package = Package(
   name: "Nanocode",
   platforms: [.macOS(.v14), .iOS(.v17)],
   products: [
+    .library(name: "NanocodeCore", targets: ["NanocodeCore"]),
+    .library(name: "NanocodeViews", targets: ["NanocodeViews"]),
     .library(name: "Nanocode", targets: ["Nanocode"]),
     .library(name: "NanocodeUI", targets: ["NanocodeUI"]),
   ],
   targets: [
     ffi,
+    .target(name: "NanocodeCore"),
+    .target(name: "NanocodeViews", dependencies: ["NanocodeCore"]),
     .target(
       name: "Nanocode",
-      dependencies: ["NanocodeFFI"],
+      dependencies: ["NanocodeCore", "NanocodeFFI"],
       linkerSettings: [
         .linkedFramework("Security"),
         .linkedFramework("SystemConfiguration"),
@@ -31,6 +35,6 @@ let package = Package(
         .linkedLibrary("resolv"),
       ]
     ),
-    .target(name: "NanocodeUI", dependencies: ["Nanocode"]),
+    .target(name: "NanocodeUI", dependencies: ["Nanocode", "NanocodeViews"]),
   ]
 )

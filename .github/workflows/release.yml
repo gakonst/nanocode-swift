@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: nanocode-swift
+
+      - name: Read SDK revision
+        id: sdk
+        run: echo "revision=$(jq -r .revision nanocode-swift/sdk-revision.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gakonst/nanocode
+          ref: ${{ steps.sdk.outputs.revision }}
+          path: nanocodex
+          persist-credentials: false
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cache/nanocode/build
+          key: cargo-${{ runner.os }}-${{ hashFiles('nanocode-swift/Cargo.lock', 'nanocode-swift/sdk-revision.json') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install Rust targets
+        working-directory: nanocode-swift
+        run: rustup show active-toolchain
+
+      - name: Publish FFI
+        working-directory: nanocode-swift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/publish-ffi.sh --upload
+
+      - name: Build Swift package
+        working-directory: nanocode-swift
+        run: swift build
+
+      - name: Commit ffi-release.json
+        working-directory: nanocode-swift
+        run: |
+          if git diff --quiet -- ffi-release.json && git ls-files --error-unmatch ffi-release.json >/dev/null 2>&1; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ffi-release.json
+          git commit -m "Point ffi-release.json at $(jq -r .fingerprint ffi-release.json) [skip ci]"
+          git push origin HEAD:main

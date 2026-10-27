@@ -123,22 +123,41 @@ public struct ActivityRow: View {
   }
 }
 
+public struct TranscriptState: Sendable {
+  public var entries: [Entry]
+  public var live: [Entry]
+  public var pending: Bool
+  public var error: String?
+  public var waiting: String?
+
+  public init(entries: [Entry], live: [Entry] = [], pending: Bool = false, error: String? = nil, waiting: String? = nil) {
+    self.entries = entries
+    self.live = live
+    self.pending = pending
+    self.error = error
+    self.waiting = waiting
+  }
+
+  public var turns: [Turn] { Turn.group(entries, live: live, pending: pending) }
+  public var activity: Activity { Activity.of(live, pending: pending) }
+}
+
 public struct TranscriptView: View {
-  let chat: Chat
+  let state: TranscriptState
   var empty: AnyView?
   @Environment(\.nanocodeTheme) private var theme
 
-  public init(chat: Chat) {
-    self.chat = chat
+  public init(_ state: TranscriptState) {
+    self.state = state
   }
 
-  public init<Empty: View>(chat: Chat, @ViewBuilder empty: () -> Empty) {
-    self.chat = chat
+  public init<Empty: View>(_ state: TranscriptState, @ViewBuilder empty: () -> Empty) {
+    self.state = state
     self.empty = AnyView(empty())
   }
 
   var progress: Int {
-    chat.entries.count * 1_000_003 + chat.live.reduce(0) { $0 + $1.text.count + ($1.tool?.output.count ?? 0) }
+    state.entries.count * 1_000_003 + state.live.reduce(0) { $0 + $1.text.count + ($1.tool?.output.count ?? 0) }
   }
 
   public var body: some View {
@@ -150,7 +169,7 @@ public struct TranscriptView: View {
   }
 
   var content: some View {
-    let turns = chat.turns
+    let turns = state.turns
     return ScrollView {
       LazyVStack(alignment: .leading, spacing: 18) {
         if turns.isEmpty, let empty {
@@ -162,16 +181,16 @@ public struct TranscriptView: View {
             ForEach(turn.blocks) { block in BlockView(block) }
           }
         }
-        if chat.pending {
-          let activity = chat.activity
-          if activity.phase == .waiting || activity.phase == .thinking && chat.live.last?.kind != .reasoning {
+        if state.pending {
+          let activity = state.activity
+          if activity.phase == .waiting || activity.phase == .thinking && state.live.last?.kind != .reasoning {
             ActivityRow(activity)
           }
         }
-        if let waiting = chat.waiting {
+        if let waiting = state.waiting {
           Text(waiting).font(.body(theme.bodySize - 3)).foregroundStyle(theme.muted)
         }
-        if let error = chat.error {
+        if let error = state.error {
           Label(error, systemImage: "exclamationmark.triangle").font(.body(theme.bodySize - 1)).foregroundStyle(theme.danger)
             .textSelection(.enabled)
         }

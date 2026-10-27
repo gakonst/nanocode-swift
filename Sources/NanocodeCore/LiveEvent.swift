@@ -1,5 +1,22 @@
 import Foundation
 
+public struct LoggedEvent: Sendable, Hashable, Identifiable {
+  public let seq: UInt64
+  public let requestID: String?
+  public let createdAt: Double
+  public let event: JSON
+  public var id: String { seq > 0 ? "\(seq)" : "live:\(requestID ?? ""):\(event.text())" }
+
+  public init?(_ json: JSON) {
+    guard let event = json["event"] else { return nil }
+    seq = json["seq"]?.uint64 ?? 0
+    requestID = json["request_id"]?.string
+    createdAt = json["created_at"]?.number ?? Date().timeIntervalSince1970 * 1000
+    self.event = event
+  }
+}
+
+
 public struct LiveEvent: Sendable, Hashable {
   public let type: String
   public var fields: [String: JSON]

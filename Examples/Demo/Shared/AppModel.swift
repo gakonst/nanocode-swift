@@ -37,6 +37,7 @@ final class AppModel {
   var model = "gpt-6-luna"
   var thinking = "low"
   var access: Access = .tempo
+  var paidTools = UserDefaults.standard.bool(forKey: "paidTools")
   var anthropicKey = AppModel.secret("anthropic")
   var openaiKey = AppModel.secret("openai")
   var error: String?
@@ -74,6 +75,7 @@ final class AppModel {
       else { try? Keychain.save(Data(value.utf8), service: "xyz.nanocode.demo.keys", account: name) }
     }
     UserDefaults.standard.set(access.rawValue, forKey: "access")
+    UserDefaults.standard.set(paidTools, forKey: "paidTools")
   }
 
   func start() async {
@@ -135,6 +137,7 @@ final class AppModel {
       sessionID: id, provider: provider, model: model, thinking: thinking, instructions: Self.instructions,
       authentication: authentication(for: provider), workspace: workspace, tools: DemoTools.all,
       environment: SessionEnvironment(cwd: workspace.path))
+    configuration.paidTools = paidTools && wallet.connected
     if !machines.isEmpty {
       configuration.hands = [relay.brain()]
       configuration.environment = nil

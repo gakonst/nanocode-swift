@@ -166,9 +166,11 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     let mut shared: Vec<Arc<dyn Tool>> = crate::tools::tools(host, config.tools.clone())
         .map(|tool| Arc::new(tool) as Arc<dyn Tool>)
         .collect();
+    let mut servers = config.mcp_servers.clone();
     if config.paid_tools {
-        shared.extend(host.payments.mcp_tools().await?);
+        servers.extend(crate::payments::Payments::paid_servers());
     }
+    shared.extend(host.payments.mcp_tools(&servers).await?);
     let mut builder = Nanocode::builder();
     let claude_client = match config.provider {
         Provider::Claude => Some(crate::config::claude_client(&config, &host.payments)?),
@@ -541,6 +543,11 @@ impl Session {
         if let Some(service_tier) = service_tier {
             agent.set_service_tier(service_tier).await.map_err(text)?;
         }
+        Ok(Value::Null)
+    }
+
+    pub async fn preconnect(&self) -> Result<Value, String> {
+        self.inbox.agent().preconnect().await.map_err(text)?;
         Ok(Value::Null)
     }
 

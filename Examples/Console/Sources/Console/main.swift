@@ -81,6 +81,7 @@ let clock = HostTool(
   parameters: ["type": "object", "properties": [:], "additionalProperties": false]
 ) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
 var configuration = SessionConfiguration(provider: provider, model: model, authentication: authentication, tools: [clock])
+configuration.paidTools = ProcessInfo.processInfo.environment["NANOCODE_PAID_TOOLS"] == "1"
 if let token = ProcessInfo.processInfo.environment["NANOCODE_RELAY_TOKEN"] {
   let relay = HandRelay(token: token)
   configuration.hands = [relay.brain()]

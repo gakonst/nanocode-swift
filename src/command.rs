@@ -75,6 +75,9 @@ pub enum Command {
     Compact {
         session: String,
     },
+    Preconnect {
+        session: String,
+    },
     Settle {
         session: String,
     },
@@ -196,6 +199,7 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
                 .await
         }
         Command::Compact { session } => host.sessions.get(&session)?.compact().await,
+        Command::Preconnect { session } => host.sessions.get(&session)?.preconnect().await,
         Command::Settle { session } => host
             .sessions
             .get(&session)?

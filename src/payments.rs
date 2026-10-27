@@ -36,7 +36,7 @@ use reqwest::ResponseBuilderExt;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::bridge::Host;
+use crate::{bridge::Host, config::McpServerConfig};
 
 pub const MACH: u128 = 1_000_000;
 const PREPAID_REQUESTS: u32 = 2;
@@ -271,19 +271,46 @@ impl Payments {
         })
     }
 
-    pub async fn mcp_tools(&self) -> Result<Vec<Arc<dyn Tool>>, String> {
+    pub fn paid_servers() -> Vec<McpServerConfig> {
+        [("mercator", MERCATOR), ("gateway", GATEWAY)]
+            .into_iter()
+            .map(|(name, url)| McpServerConfig {
+                name: name.to_owned(),
+                url: url.to_owned(),
+                headers: Default::default(),
+                bearer_token: None,
+                paid: true,
+            })
+            .collect()
+    }
+
+    pub async fn mcp_tools(
+        &self,
+        servers: &[McpServerConfig],
+    ) -> Result<Vec<Arc<dyn Tool>>, String> {
+        if servers.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut mcp = Mcp::builder();
-        for (name, url) in [("mercator", MERCATOR), ("gateway", GATEWAY)] {
-            let url: reqwest::Url = url
+        for config in servers {
+            let url: reqwest::Url = config
+                .url
                 .parse()
-                .map_err(|error: url::ParseError| error.to_string())?;
-            mcp = mcp.server(
-                name,
-                McpServer::http(url.as_str()).payment_provider(Arc::new(McpPayments {
+                .map_err(|error: url::ParseError| format!("MCP server {}: {error}", config.name))?;
+            let mut server = McpServer::http(url.as_str());
+            for (name, value) in &config.headers {
+                server = server.header(name.clone(), value.clone());
+            }
+            if let Some(token) = &config.bearer_token {
+                server = server.bearer_token(token.clone());
+            }
+            if config.paid {
+                server = server.payment_provider(Arc::new(McpPayments {
                     payments: self.clone(),
                     url,
-                })),
-            );
+                }));
+            }
+            mcp = mcp.server(config.name.clone(), server);
         }
         let mcp = mcp.build().map_err(|error| error.to_string())?;
         let servers = mcp.prepared_servers(MCP_TIMEOUT).await;
@@ -577,7 +604,10 @@ struct Layered<'a, L> {
 }
 
 impl<L: Layer> layer::Sender for Layered<'_, L> {
-    fn send(&self, request: layer::Request) -> BoxFuture<'_, Result<layer::Response, layer::Error>> {
+    fn send(
+        &self,
+        request: layer::Request,
+    ) -> BoxFuture<'_, Result<layer::Response, layer::Error>> {
         Box::pin(async move {
             let sender = nanocode_http::ReqwestSender::new(self.client);
             self.layer.send(request, Next::new(&sender)).await
@@ -586,11 +616,22 @@ impl<L: Layer> layer::Sender for Layered<'_, L> {
 }
 
 impl<L: Layer> HostTransport for Transport<L> {
-    fn connect<'a>(&'a self, _request: HostConnectRequest<'a>) -> HostFuture<'a, Result<ConnectedHost, HostError>> {
-        Box::pin(async { Err(HostError::new("this host sends web search requests over HTTPS only")) })
+    fn connect<'a>(
+        &'a self,
+        _request: HostConnectRequest<'a>,
+    ) -> HostFuture<'a, Result<ConnectedHost, HostError>> {
+        Box::pin(async {
+            Err(HostError::new(
+                "this host sends web search requests over HTTPS only",
+            ))
+        })
     }
 
-    fn http<'a>(&'a self, request: HostConnectRequest<'a>, body: &'a str) -> HostFuture<'a, Result<HostHttpResponse, HostError>> {
+    fn http<'a>(
+        &'a self,
+        request: HostConnectRequest<'a>,
+        body: &'a str,
+    ) -> HostFuture<'a, Result<HostHttpResponse, HostError>> {
         Box::pin(async move {
             let sender = Layered {
                 layer: &self.layer,

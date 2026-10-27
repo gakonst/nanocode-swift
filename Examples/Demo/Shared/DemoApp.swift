@@ -193,6 +193,7 @@ struct SettingsView: View {
       if model.access == .tempo {
         Section("Wallet") {
           WalletView(monitor: model.wallet, allowsTempoCLI: true)
+          Toggle("Paid tools from Mercator and the Tempo gateway", isOn: $model.paidTools)
         }
       }
       Section("Computer") {

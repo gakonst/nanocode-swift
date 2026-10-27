@@ -99,11 +99,26 @@ impl HandLink {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    #[serde(default)]
+    pub paid: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
     #[serde(default)]
     pub hands: Vec<HandLink>,
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
     pub session_id: String,
     #[serde(default)]
     pub provider: Provider,
@@ -325,17 +340,26 @@ pub fn codex_web_search(
             _ => OPENAI_API.to_owned(),
         });
     let transport: Arc<dyn nanocode::codex::transport::host::HostTransport> = match &config.auth {
-        Auth::Tempo => Arc::new(crate::payments::Transport::new(payments.layer(Service::OpenAi, &base)?)),
-        Auth::Headers(headers) => Arc::new(crate::payments::Transport::new(crate::payments::Headers(header_map(headers)?))),
+        Auth::Tempo => Arc::new(crate::payments::Transport::new(
+            payments.layer(Service::OpenAi, &base)?,
+        )),
+        Auth::Headers(headers) => Arc::new(crate::payments::Transport::new(
+            crate::payments::Headers(header_map(headers)?),
+        )),
         Auth::ApiKey(key) => {
             let mut headers = http::HeaderMap::new();
-            let mut value = http::HeaderValue::from_str(&format!("Bearer {key}")).map_err(|error| error.to_string())?;
+            let mut value = http::HeaderValue::from_str(&format!("Bearer {key}"))
+                .map_err(|error| error.to_string())?;
             value.set_sensitive(true);
             headers.insert(http::header::AUTHORIZATION, value);
-            Arc::new(crate::payments::Transport::new(crate::payments::Headers(headers)))
+            Arc::new(crate::payments::Transport::new(crate::payments::Headers(
+                headers,
+            )))
         }
     };
-    Ok(Some(Arc::new(nanocode::codex_tools::web_search_tool(&base, None, transport))))
+    Ok(Some(Arc::new(nanocode::codex_tools::web_search_tool(
+        &base, None, transport,
+    ))))
 }
 
 fn messages_url(base: &str) -> String {

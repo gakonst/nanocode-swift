@@ -135,8 +135,33 @@ public struct HandRelay: Sendable, Hashable {
   }
 }
 
+public struct McpServer: Sendable, Hashable {
+  public var name: String
+  public var url: String
+  public var headers: [String: String]
+  public var bearerToken: String?
+  public var paid: Bool
+
+  public init(name: String, url: String, headers: [String: String] = [:], bearerToken: String? = nil, paid: Bool = false) {
+    self.name = name
+    self.url = url
+    self.headers = headers
+    self.bearerToken = bearerToken
+    self.paid = paid
+  }
+
+  var json: JSON {
+    var object: [String: JSON] = [
+      "name": .string(name), "url": .string(url), "headers": .object(headers.mapValues(JSON.string)), "paid": .bool(paid),
+    ]
+    if let bearerToken { object["bearer_token"] = .string(bearerToken) }
+    return .object(object)
+  }
+}
+
 public struct SessionConfiguration: Sendable {
   public var hands: [HandLink] = []
+  public var mcpServers: [McpServer] = []
   public var sessionID: String
   public var provider: Provider
   public var model: String?
@@ -207,6 +232,7 @@ public struct SessionConfiguration: Sendable {
     if let workspace { object["workspace"] = .string(workspace.path) }
     if let environment { object["environment"] = environment.json }
     if !hands.isEmpty { object["hands"] = .array(hands.map(\.json)) }
+    if !mcpServers.isEmpty { object["mcp_servers"] = .array(mcpServers.map(\.json)) }
     return .object(object)
   }
 }
@@ -352,6 +378,10 @@ public final class Session: Sendable {
   @discardableResult
   public func compact() async throws -> JSON {
     try await runtime.command("compact", ["session": .string(id)])
+  }
+
+  public func preconnect() async throws {
+    try await runtime.command("preconnect", ["session": .string(id)])
   }
 
   public func settle() async throws -> Bool {

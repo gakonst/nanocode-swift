@@ -51,6 +51,14 @@ public struct NanocodeTheme: Sendable {
   public static let nanocode = NanocodeTheme(
     accent: Color(red: 0.98, green: 0.45, blue: 0.09), link: Color(red: 0.98, green: 0.45, blue: 0.09),
     userBubble: Color(red: 0.98, green: 0.45, blue: 0.09).opacity(0.12))
+
+  public static let claude = NanocodeTheme(
+    accent: Color(red: 0.85, green: 0.47, blue: 0.34), link: Color(red: 0.72, green: 0.36, blue: 0.24),
+    userBubble: Color(red: 0.94, green: 0.92, blue: 0.88), bodySize: 16, lineHeight: 1.6, columnWidth: 720)
+
+  public static let chatgpt = NanocodeTheme(
+    accent: Color(white: 0.1), link: Color(red: 0.06, green: 0.45, blue: 0.85),
+    userBubble: Color.secondary.opacity(0.14), bodySize: 16, lineHeight: 1.55, columnWidth: 740)
 }
 
 private struct ThemeKey: EnvironmentKey {

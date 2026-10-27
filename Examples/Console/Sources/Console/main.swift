@@ -1,0 +1,58 @@
+import Foundation
+import Nanocode
+
+let arguments = CommandLine.arguments.dropFirst()
+let provider = Provider(rawValue: ProcessInfo.processInfo.environment["NANOCODE_PROVIDER"] ?? "claude") ?? .claude
+let model = ProcessInfo.processInfo.environment["NANOCODE_MODEL"]
+let prompt = arguments.joined(separator: " ").isEmpty ? "Say hi in five words." : arguments.joined(separator: " ")
+let directory = FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console", isDirectory: true)
+
+let runtime = try NanocodeRuntime(dataDirectory: directory)
+let events = runtime.events
+Task {
+  for await event in events {
+    switch event {
+    case .notice(let notice): print("[payments] \(notice)")
+    case .payments(let status): print("[spend] \(PaymentStatus(status).total) MACH")
+    case .log(let line): print("[log] \(line)")
+    default: break
+    }
+  }
+}
+let wallet = Wallet(runtime: runtime)
+let authentication: Authentication
+if let key = ProcessInfo.processInfo.environment[provider == .claude ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"] {
+  authentication = .apiKey(key)
+} else {
+  let status = try await wallet.useTempoCLI()
+  print("[wallet] \(status.account ?? "none") via \(status.source ?? "")")
+  authentication = .tempo
+}
+let clock = HostTool(
+  name: "clock",
+  description: "Returns the current date and time on this device.",
+  parameters: ["type": "object", "properties": [:], "additionalProperties": false]
+) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
+let session = try await runtime.open(SessionConfiguration(
+  provider: provider, model: model, authentication: authentication, tools: [clock]))
+print("[session] \(session.id) \(session.model)")
+let chat = await Chat(revealMs: 0)
+await chat.attach(session, history: false)
+await chat.send(prompt)
+var printed = 0
+while true {
+  try await Task.sleep(nanoseconds: 200_000_000)
+  let (entries, pending, error) = await MainActor.run { (chat.entries, chat.pending, chat.error) }
+  for entry in entries.dropFirst(printed) {
+    switch entry.kind {
+    case .tool: print("⏺ \(entry.text)")
+    case .user: print("› \(entry.text)")
+    default: print("[\(entry.kind.rawValue)] \(entry.text)")
+    }
+  }
+  printed = entries.count
+  if let error { print("[error] \(error)") }
+  if !pending, printed > 1 { break }
+}
+let status = try await wallet.status()
+print("[spend] total \(status.total) MACH across \(status.services.count) services")

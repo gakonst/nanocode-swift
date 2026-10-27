@@ -1,0 +1,6 @@
+[build]
+rustc-wrapper = "../nanocodex/scripts/buildcache"
+
+[env]
+MACOSX_DEPLOYMENT_TARGET = "12.3"
+IPHONEOS_DEPLOYMENT_TARGET = "16.0"

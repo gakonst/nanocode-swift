@@ -1,0 +1,4 @@
+module NanocodeFFI {
+    header "nanocode.h"
+    export *
+}

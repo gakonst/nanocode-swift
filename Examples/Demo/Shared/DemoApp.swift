@@ -150,6 +150,10 @@ struct Welcome: View {
           .background(theme.surface, in: RoundedRectangle(cornerRadius: 14))
           .frame(maxWidth: 440)
       }
+      MachineConnectView(relay: model.relay, machines: model.machines)
+        .padding(16)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: 440)
       VStack(spacing: 8) {
         ForEach(Self.prompts, id: \.self) { prompt in
           Button {
@@ -185,6 +189,9 @@ struct SettingsView: View {
         Section("Wallet") {
           WalletView(monitor: model.wallet, allowsTempoCLI: true)
         }
+      }
+      Section("Computer") {
+        MachineConnectView(relay: model.relay, machines: model.machines)
       }
       Section("Hand") {
         HandView(monitor: model.hand, tools: DemoTools.all, workspace: model.workspace)

@@ -66,9 +66,44 @@ pub struct Environment {
     pub project_instructions: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HandMode {
+    #[default]
+    Alongside,
+    Replace,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandLink {
+    pub url: String,
+    pub token: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mode: HandMode,
+}
+
+impl HandLink {
+    pub fn runner(&self) -> nanocode::Runner {
+        let runner = nanocode::Runner::connect(self.url.clone()).token(self.token.clone());
+        let runner = match &self.name {
+            Some(name) => runner.name(name.clone()),
+            None => runner,
+        };
+        match self.mode {
+            HandMode::Alongside => runner.alongside(),
+            HandMode::Replace => runner.replace(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
+    #[serde(default)]
+    pub hands: Vec<HandLink>,
     pub session_id: String,
     #[serde(default)]
     pub provider: Provider,

@@ -41,6 +41,9 @@ final class AppModel {
   var openaiKey = AppModel.secret("openai")
   var error: String?
   var opening = false
+  var machines: [String] = []
+  let relay: HandRelay
+  @ObservationIgnored private var watcher: Task<Void, Never>?
 
   init() {
     do {
@@ -50,6 +53,12 @@ final class AppModel {
     }
     wallet = WalletMonitor(runtime: runtime, name: "nanocode for \(AppModel.platform)", website: "https://nanocode.xyz")
     hand = HandMonitor(runtime: runtime)
+    if let token = UserDefaults.standard.string(forKey: "relayToken") {
+      relay = HandRelay(token: token)
+    } else {
+      relay = HandRelay()
+      UserDefaults.standard.set(relay.token, forKey: "relayToken")
+    }
     if let saved = UserDefaults.standard.string(forKey: "access").flatMap(Access.init(rawValue:)) { access = saved }
   }
 
@@ -78,6 +87,8 @@ final class AppModel {
       thinking = catalog?.model(model)?.effort ?? thinking
     }
     await refresh()
+    machines = await relay.hands()
+    watch()
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
       await chat.send(prompt)
@@ -85,6 +96,26 @@ final class AppModel {
       await open(first)
     } else {
       await newChat()
+    }
+  }
+
+  func watch() {
+    watcher?.cancel()
+    watcher = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        let attached = !(self?.machines.isEmpty ?? true)
+        try? await Task.sleep(nanoseconds: attached ? 20_000_000_000 : 3_000_000_000)
+        guard let self else { return }
+        let machines = await self.relay.hands()
+        guard machines != self.machines else { continue }
+        let changed = machines.isEmpty != self.machines.isEmpty
+        self.machines = machines
+        if changed, let id = self.selection, !self.chat.pending {
+          let summary = self.conversations.first { $0.id == id }
+          await self.open(id: id, provider: summary.flatMap { Provider(rawValue: $0.family) } ?? self.provider,
+                          model: summary?.model ?? self.model, thinking: nil)
+        }
+      }
     }
   }
 
@@ -100,10 +131,16 @@ final class AppModel {
   }
 
   func configuration(id: String, provider: Provider, model: String, thinking: String?) -> SessionConfiguration {
-    SessionConfiguration(
+    var configuration = SessionConfiguration(
       sessionID: id, provider: provider, model: model, thinking: thinking, instructions: Self.instructions,
       authentication: authentication(for: provider), workspace: workspace, tools: DemoTools.all,
       environment: SessionEnvironment(cwd: workspace.path))
+    if !machines.isEmpty {
+      configuration.hands = [relay.brain()]
+      configuration.environment = nil
+      configuration.instructions = Self.instructions + " The user's computer \(machines.joined(separator: ", ")) is attached: commands and cells run there, not on this device."
+    }
+    return configuration
   }
 
   func newChat() async {

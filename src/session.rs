@@ -240,12 +240,19 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     tokio::fs::create_dir_all(&workspace)
         .await
         .map_err(|error| format!("create {}: {error}", workspace.display()))?;
-    builder = builder
-        .workspace(workspace.clone())
-        .without_runners()
-        .durability(storage.store.clone());
+    builder = builder.workspace(workspace.clone());
+    builder = if config.hands.is_empty() {
+        builder.without_runners()
+    } else {
+        config
+            .hands
+            .iter()
+            .fold(builder, |builder, hand| builder.runner(hand.runner()))
+    };
+    builder = builder.durability(storage.store.clone());
     let runtime = builder
-        .build()
+        .build_async()
+        .await
         .map_err(|error| format!("build runtime: {error}"))?;
     let subagents = runtime.subagents().cloned();
     let inbox_host = Arc::new(AppInbox {

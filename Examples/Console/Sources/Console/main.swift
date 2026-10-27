@@ -64,8 +64,13 @@ let clock = HostTool(
   description: "Returns the current date and time on this device.",
   parameters: ["type": "object", "properties": [:], "additionalProperties": false]
 ) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
-let session = try await runtime.open(SessionConfiguration(
-  provider: provider, model: model, authentication: authentication, tools: [clock]))
+var configuration = SessionConfiguration(provider: provider, model: model, authentication: authentication, tools: [clock])
+if let token = ProcessInfo.processInfo.environment["NANOCODE_RELAY_TOKEN"] {
+  let relay = HandRelay(token: token)
+  configuration.hands = [relay.brain()]
+  print("[relay] \(relay.short)")
+}
+let session = try await runtime.open(configuration)
 print("[session] \(session.id) \(session.model)")
 let chat = await Chat(revealMs: 0)
 await chat.attach(session, history: false)

@@ -74,7 +74,69 @@ public struct SessionEnvironment: Sendable {
   }
 }
 
+public struct HandLink: Sendable, Hashable {
+  public enum Mode: String, Sendable { case alongside, replace }
+  public var url: String
+  public var token: String
+  public var name: String?
+  public var mode: Mode
+
+  public init(url: String, token: String, name: String? = nil, mode: Mode = .alongside) {
+    self.url = url
+    self.token = token
+    self.name = name
+    self.mode = mode
+  }
+
+  var json: JSON {
+    var object: [String: JSON] = ["url": .string(url), "token": .string(token), "mode": .string(mode.rawValue)]
+    if let name { object["name"] = .string(name) }
+    return .object(object)
+  }
+}
+
+public struct HandRelay: Sendable, Hashable {
+  public static let nanocode = URL(string: "https://nanocode.xyz/cloudflare/relay")!
+  public static let install = "https://nanocode.xyz/install"
+  public let base: URL
+  public let token: String
+
+  public init(base: URL = HandRelay.nanocode, token: String = HandRelay.newToken()) {
+    self.base = base
+    self.token = token
+  }
+
+  public static func newToken() -> String {
+    var bytes = [UInt8](repeating: 0, count: 16)
+    _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    return bytes.map { String(format: "%02x", $0) }.joined()
+  }
+
+  public var socket: String {
+    var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+    components.scheme = components.scheme == "http" ? "ws" : "wss"
+    return components.url!.absoluteString
+  }
+
+  public func brain(mode: HandLink.Mode = .replace) -> HandLink {
+    HandLink(url: socket + (socket.contains("?") ? "&" : "?") + "role=brain&wait", token: token, mode: mode)
+  }
+
+  public var command: String { "curl -fsSL \(Self.install) | sh -s -- hand '\(socket)' --token \(token)" }
+
+  public var short: String { "nc hand '\(socket)' --token \(token)" }
+
+  public func hands() async -> [String] {
+    var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+    components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "token", value: token)]
+    guard let url = components.url, let (data, response) = try? await URLSession.shared.data(from: url),
+          (response as? HTTPURLResponse)?.statusCode == 200, let json = try? JSON.parse(data) else { return [] }
+    return json["hands"]?.array?.compactMap(\.string) ?? []
+  }
+}
+
 public struct SessionConfiguration: Sendable {
+  public var hands: [HandLink] = []
   public var sessionID: String
   public var provider: Provider
   public var model: String?
@@ -144,6 +206,7 @@ public struct SessionConfiguration: Sendable {
     if let subagents { object["subagents"] = .bool(subagents) }
     if let workspace { object["workspace"] = .string(workspace.path) }
     if let environment { object["environment"] = environment.json }
+    if !hands.isEmpty { object["hands"] = .array(hands.map(\.json)) }
     return .object(object)
   }
 }

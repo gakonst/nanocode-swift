@@ -157,6 +157,46 @@ public struct HandView: View {
   }
 }
 
+public struct MachineConnectView: View {
+  let relay: HandRelay
+  let machines: [String]
+  @State private var copied = false
+  @Environment(\.nanocodeTheme) private var theme
+
+  public init(relay: HandRelay, machines: [String]) {
+    self.relay = relay
+    self.machines = machines
+  }
+
+  public var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 10) {
+        Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(machines.isEmpty ? theme.muted : theme.success)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(machines.isEmpty ? "Connect a computer" : "Running on \(machines.joined(separator: ", "))")
+            .font(.body(theme.bodySize, weight: .semibold))
+          Text(machines.isEmpty ? "Run this in a terminal, and the agent's commands run there." : "Commands and Code Mode cells run on that machine.")
+            .font(.body(theme.bodySize - 2)).foregroundStyle(theme.muted)
+        }
+        Spacer()
+      }
+      HStack(alignment: .top) {
+        Text(relay.command).font(.mono(theme.codeSize - 1)).textSelection(.enabled).lineLimit(4)
+        Spacer(minLength: 6)
+        Button {
+          Pasteboard.copy(relay.command)
+          copied = true
+        } label: {
+          Image(systemName: copied ? "checkmark" : "doc.on.doc").foregroundStyle(theme.muted)
+        }
+        .buttonStyle(.plain)
+      }
+      .padding(10)
+      .background(theme.popover, in: RoundedRectangle(cornerRadius: 8))
+    }
+  }
+}
+
 public struct ModelMenu: View {
   let catalog: ModelCatalog?
   @Binding var provider: Provider

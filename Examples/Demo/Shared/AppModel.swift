@@ -70,8 +70,22 @@ final class AppModel {
   func start() async {
     catalog = try? await runtime.models()
     await wallet.restore()
+    if UserDefaults.standard.string(forKey: "NanocodeWallet") == "cli" { await wallet.useTempoCLI() }
+    if let provider = UserDefaults.standard.string(forKey: "NanocodeProvider").flatMap(Provider.init(rawValue:)),
+       let model = UserDefaults.standard.string(forKey: "NanocodeModel") {
+      self.provider = provider
+      self.model = model
+      thinking = catalog?.model(model)?.effort ?? thinking
+    }
     await refresh()
-    if let first = conversations.first { await open(first) } else { await newChat() }
+    if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
+      await newChat()
+      await chat.send(prompt)
+    } else if let first = conversations.first {
+      await open(first)
+    } else {
+      await newChat()
+    }
   }
 
   func refresh() async {

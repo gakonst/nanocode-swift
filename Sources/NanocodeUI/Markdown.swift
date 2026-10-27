@@ -286,19 +286,28 @@ public struct CodeBlock: View {
     self.maxHeight = maxHeight
   }
 
-  public var body: some View {
-    ScrollView([.horizontal, .vertical]) {
+  var code: some View {
+    ScrollView(.horizontal) {
       Text(Highlight.attributed(text, language: language, theme: theme) ?? AttributedString(text))
         .font(.mono(theme.codeSize))
         .lineSpacing(3)
         .fixedSize()
         .textSelection(.enabled)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
     .scrollIndicators(.never)
-    .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: .leading)
-    .fixedSize(horizontal: false, vertical: maxHeight == nil)
+    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  public var body: some View {
+    Group {
+      if let maxHeight, text.split(separator: "\n", omittingEmptySubsequences: false).count > 14 {
+        ScrollView(.vertical) { code }.frame(maxHeight: maxHeight)
+      } else {
+        code
+      }
+    }
     .background(theme.popover, in: RoundedRectangle(cornerRadius: 10))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(theme.border, lineWidth: 1))
     .overlay(alignment: .topTrailing) {
@@ -342,6 +351,8 @@ struct TableCard: View {
     .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
     .background(theme.popover, in: RoundedRectangle(cornerRadius: 10))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(theme.border, lineWidth: 1))
+    .fixedSize(horizontal: true, vertical: false)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 

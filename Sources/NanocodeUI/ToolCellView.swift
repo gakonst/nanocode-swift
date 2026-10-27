@@ -11,6 +11,12 @@ public struct ToolCellView: View {
     self.depth = depth
   }
 
+  var headline: String {
+    if !cell.title.isEmpty { return cell.title }
+    guard cell.body == .code else { return "" }
+    return cell.input.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
+  }
+
   var hasBody: Bool {
     !cell.input.isEmpty || !cell.output.isEmpty || !cell.images.isEmpty || !cell.children.isEmpty
   }
@@ -23,8 +29,8 @@ public struct ToolCellView: View {
         HStack(spacing: 8) {
           StatusIcon(status: cell.status)
           Text(cell.name).font(.mono(theme.codeSize, weight: .semibold)).foregroundStyle(theme.foreground)
-          if !cell.title.isEmpty {
-            Text(cell.title).font(.mono(theme.codeSize)).foregroundStyle(theme.muted).lineLimit(1).truncationMode(.middle)
+          if !headline.isEmpty {
+            Text(headline).font(.mono(theme.codeSize)).foregroundStyle(theme.muted).lineLimit(1).truncationMode(.tail)
           }
           Spacer(minLength: 4)
           let meta = ([cell.durationMs.map(Format.duration)] + cell.details.map { Optional($0) }).compactMap { $0 }

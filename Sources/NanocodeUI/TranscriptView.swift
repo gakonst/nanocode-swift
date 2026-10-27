@@ -137,9 +137,21 @@ public struct TranscriptView: View {
     self.empty = AnyView(empty())
   }
 
+  var progress: Int {
+    chat.entries.count * 1_000_003 + chat.live.reduce(0) { $0 + $1.text.count + ($1.tool?.output.count ?? 0) }
+  }
+
   public var body: some View {
+    ScrollViewReader { proxy in
+      content
+        .onChange(of: progress) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+        .onAppear { proxy.scrollTo("end", anchor: .bottom) }
+    }
+  }
+
+  var content: some View {
     let turns = chat.turns
-    ScrollView {
+    return ScrollView {
       LazyVStack(alignment: .leading, spacing: 18) {
         if turns.isEmpty, let empty {
           empty.frame(maxWidth: .infinity, minHeight: 240)

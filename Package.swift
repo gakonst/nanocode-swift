@@ -19,7 +19,6 @@ let package = Package(
     .library(name: "NanocodeCore", targets: ["NanocodeCore"]),
     .library(name: "NanocodeViews", targets: ["NanocodeViews"]),
     .library(name: "Nanocode", targets: ["Nanocode"]),
-    .library(name: "NanocodeUI", targets: ["NanocodeUI"]),
     .library(name: "NanocodeKit", targets: ["NanocodeKit"]),
   ],
   targets: [
@@ -36,7 +35,6 @@ let package = Package(
         .linkedLibrary("resolv"),
       ]
     ),
-    .target(name: "NanocodeUI", dependencies: ["Nanocode", "NanocodeViews"]),
     .target(name: "NanocodeKit", dependencies: ["NanocodeCore", "Nanocode"]),
   ]
 )

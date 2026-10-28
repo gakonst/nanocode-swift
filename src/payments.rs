@@ -278,6 +278,8 @@ impl Payments {
                 name: name.to_owned(),
                 url: url.to_owned(),
                 headers: Default::default(),
+                command: Vec::new(),
+                env: Default::default(),
                 bearer_token: None,
                 paid: true,
             })
@@ -293,6 +295,20 @@ impl Payments {
         }
         let mut mcp = Mcp::builder();
         for config in servers {
+            if let Some((program, arguments)) = config.command.split_first() {
+                if cfg!(target_os = "ios") {
+                    return Err(format!(
+                        "MCP server {}: iOS apps cannot run local commands",
+                        config.name
+                    ));
+                }
+                let server = config.env.iter().fold(
+                    McpServer::stdio(program.clone()).args(arguments.iter().cloned()),
+                    |server, (name, value)| server.env(name.clone(), value.clone()),
+                );
+                mcp = mcp.server(config.name.clone(), server);
+                continue;
+            }
             let url: reqwest::Url = config
                 .url
                 .parse()

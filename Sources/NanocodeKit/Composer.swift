@@ -354,7 +354,7 @@ public final class ComposerNode: Stack {
   var empty: Bool { input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty }
 
   public func refresh() {
-    let pending = chat.pending
+    let pending = chat.pending || !chat.live.isEmpty
     let stopping = pending && empty
     let disabled = !stopping && empty
     let placeholder = skin.claude ? (pending ? "Add to the response…" : "How can I help you today?") : (pending ? "Steer the response" : "Ask anything")

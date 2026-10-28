@@ -14,6 +14,7 @@ final class DemoController: KitViewController {
   private var pill: ClonePill?
   private var observer: Observer?
   private var reported: String?
+  private var pending = false
 
   init(model: AppModel) {
     self.model = model
@@ -62,6 +63,21 @@ final class DemoController: KitViewController {
       DispatchQueue.main.async { next.clone.conversation.composer.focus() }
       #endif
     }
+    if let script = model.script, let composer = shown?.clone.conversation.composer {
+      model.script = nil
+      Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        for character in script {
+          composer.input.string.append(character)
+          try? await Task.sleep(nanoseconds: 28_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        composer.submit()
+      }
+    }
+    let busy = model.chat.pending
+    if pending, !busy { Task { await model.refresh() } }
+    pending = busy
     if let error = model.error, error != reported {
       reported = error
       alert(error)

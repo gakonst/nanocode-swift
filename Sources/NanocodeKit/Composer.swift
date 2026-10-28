@@ -31,6 +31,8 @@ public final class InputNode: Node {
   #if os(macOS)
   let view: InputText
   let scroll = NSScrollView()
+  let container: NSTextContainer
+  let manager: NSLayoutManager
   #else
   let view = UITextView(usingTextLayoutManager: false)
   #endif
@@ -38,11 +40,11 @@ public final class InputNode: Node {
   public override init(frame: CGRect) {
     #if os(macOS)
     let storage = NSTextStorage()
-    let manager = NSLayoutManager()
+    manager = NSLayoutManager()
     storage.addLayoutManager(manager)
-    let container = NSTextContainer(size: CGSize(width: 100, height: unbounded))
+    container = NSTextContainer(size: CGSize(width: 100, height: unbounded))
     container.lineFragmentPadding = 0
-    container.widthTracksTextView = true
+    container.widthTracksTextView = false
     manager.addTextContainer(container)
     view = InputText(frame: .zero, textContainer: container)
     view.isRichText = false
@@ -51,7 +53,6 @@ public final class InputNode: Node {
     view.textContainerInset = .zero
     view.isVerticallyResizable = true
     view.isHorizontallyResizable = false
-    view.autoresizingMask = [.width]
     view.maxSize = CGSize(width: unbounded, height: unbounded)
     view.isAutomaticQuoteSubstitutionEnabled = false
     view.isAutomaticDashSubstitutionEnabled = false
@@ -91,11 +92,14 @@ public final class InputNode: Node {
   public var string: String {
     get { view.text ?? "" }
     set {
+      let text = NSAttributedString(string: newValue, attributes: attributes)
       #if os(macOS)
-      view.string = newValue
+      view.textStorage?.setAttributedString(text)
+      view.setSelectedRange(NSRange(location: text.length, length: 0))
       #else
-      view.text = newValue
+      view.attributedText = text
       #endif
+      view.typingAttributes = attributes
       changed()
     }
   }
@@ -135,10 +139,13 @@ public final class InputNode: Node {
   }
 
   public override func contentSize(_ width: CGFloat) -> CGSize {
-    var text = string.isEmpty ? " " : string
-    if text.hasSuffix("\n") { text += " " }
-    let natural = NSAttributedString(string: text, attributes: attributes)
-      .boundingRect(with: CGSize(width: max(1, width), height: unbounded), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height
+    #if os(macOS)
+    container.size = CGSize(width: max(1, width), height: unbounded)
+    manager.ensureLayout(for: container)
+    let natural = manager.usedRect(for: container).height
+    #else
+    let natural = view.sizeThatFits(CGSize(width: max(1, width), height: unbounded)).height
+    #endif
     let height = min(max(line, ceil(natural)), line * CGFloat(maxLines))
     #if os(iOS)
     view.isScrollEnabled = natural > line * CGFloat(maxLines)
@@ -151,8 +158,10 @@ public final class InputNode: Node {
   public override func arrange(_ rect: CGRect) {
     #if os(macOS)
     scroll.frame = rect
-    view.minSize = CGSize(width: 0, height: rect.height)
+    container.size = CGSize(width: max(1, rect.width), height: unbounded)
+    view.minSize = CGSize(width: rect.width, height: rect.height)
     view.frame.size.width = rect.width
+    view.sizeToFit()
     #else
     view.frame = rect
     #endif
@@ -377,7 +386,7 @@ public final class ComposerNode: Stack {
     modelChevron.color = color
   }
 
-  func submit() {
+  public func submit() {
     if chat.pending, empty {
       Task { await chat.stop() }
       return

@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = menu()
+    if let appearance = UserDefaults.standard.string(forKey: "NanocodeAppearance") {
+      NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
+    }
     let controller = DemoController(model: model)
     controller.openSettings = { [weak self] in self?.showSettings() }
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
@@ -37,12 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   var requested: NSSize?
-  var fits = 0
+  let launched = Date()
 
   func fit() {
-    guard let window, let requested, window.contentLayoutRect.size != requested, fits < 8 else { return }
-    fits += 1
-    window.setContentSize(requested)
+    guard let window, let requested, window.contentLayoutRect.size != requested, Date().timeIntervalSince(launched) < 20 else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      guard let self, let window = self.window, window.contentLayoutRect.size != requested else { return }
+      window.setContentSize(requested)
+    }
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

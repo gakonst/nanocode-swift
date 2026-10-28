@@ -68,6 +68,7 @@ final class AppModel {
   var openaiKey = AppModel.secret("openai")
   var error: String?
   var opening = false
+  var script: String?
   var machines: [String] = []
   let relay: HandRelay
   @ObservationIgnored private var watcher: Task<Void, Never>?
@@ -147,7 +148,7 @@ final class AppModel {
     watch()
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
-      await chat.send(prompt)
+      if UserDefaults.standard.bool(forKey: "NanocodeType") { script = prompt } else { await chat.send(prompt) }
     } else if !UserDefaults.standard.bool(forKey: "NanocodeNew"), let first = visible.first {
       await open(first)
     } else {

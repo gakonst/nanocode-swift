@@ -138,6 +138,8 @@ public struct HandRelay: Sendable, Hashable {
 public struct McpServer: Sendable, Hashable {
   public var name: String
   public var url: String
+  public var command: [String] = []
+  public var environment: [String: String] = [:]
   public var headers: [String: String]
   public var bearerToken: String?
   public var paid: Bool
@@ -150,9 +152,16 @@ public struct McpServer: Sendable, Hashable {
     self.paid = paid
   }
 
+  public init(name: String, command: [String], environment: [String: String] = [:]) {
+    self.init(name: name, url: "")
+    self.command = command
+    self.environment = environment
+  }
+
   var json: JSON {
     var object: [String: JSON] = [
       "name": .string(name), "url": .string(url), "headers": .object(headers.mapValues(JSON.string)), "paid": .bool(paid),
+      "command": .array(command.map(JSON.string)), "env": .object(environment.mapValues(JSON.string)),
     ]
     if let bearerToken { object["bearer_token"] = .string(bearerToken) }
     return .object(object)

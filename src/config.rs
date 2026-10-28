@@ -103,7 +103,12 @@ impl HandLink {
 #[serde(deny_unknown_fields)]
 pub struct McpServerConfig {
     pub name: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     #[serde(default)]

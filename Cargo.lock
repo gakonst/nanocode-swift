@@ -4165,6 +4165,7 @@ dependencies = [
  "nanocode",
  "nanocode-code-mode",
  "nanocode-http",
+ "nanocode-mcp",
  "nanocode-mcp-tools",
  "nanocode-process-contracts",
  "nanocode-store-sqlite",

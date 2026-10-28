@@ -3,7 +3,11 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{bridge::Host, config::Configuration, hand, runner, session, wallet};
+use crate::{
+    bridge::Host,
+    config::{Configuration, McpServerConfig},
+    hand, mcp, runner, session, wallet,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -102,6 +106,10 @@ pub enum Command {
         ok: Option<Value>,
         #[serde(default)]
         error: Option<String>,
+    },
+    McpSignIn(McpServerConfig),
+    McpSignInWait {
+        server: String,
     },
     HandStart(Box<hand::Start>),
     HandStop {
@@ -235,6 +243,8 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
             };
             Ok(Value::Bool(host.resolve(id, result)))
         }
+        Command::McpSignIn(server) => mcp::sign_in(host, server).await,
+        Command::McpSignInWait { server } => mcp::finish(host, &server).await,
         Command::HandStart(start) => hand::start(host, *start).await,
         Command::HandStop { id } => Ok(hand::stop(host, &id)),
         Command::HandStatus {} => Ok(hand::status(host)),

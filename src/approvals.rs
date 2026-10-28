@@ -36,6 +36,12 @@ enum Decision {
     Deny(Option<String>),
 }
 
+enum Verdict {
+    Run,
+    Sandbox(PathBuf),
+    Refuse(String),
+}
+
 #[derive(Debug, PartialEq)]
 enum Action {
     Read,
@@ -47,6 +53,7 @@ enum Action {
 pub struct Gate {
     host: Weak<Host>,
     workspace: PathBuf,
+    sandbox: Option<(PathBuf, PathBuf)>,
     mode: Atom<Mode>,
     allowed_mcp: Atom<HashSet<String>>,
 }
@@ -55,6 +62,7 @@ impl Gate {
     pub fn new(host: &Arc<Host>, workspace: &Path, mode: Mode) -> Arc<Self> {
         Arc::new(Self {
             host: Arc::downgrade(host),
+            sandbox: crate::sandbox::profiles(workspace),
             workspace: std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_owned()),
             mode: Atom::new(mode),
             allowed_mcp: Atom::default(),
@@ -110,36 +118,37 @@ impl Gate {
         Ok(gated)
     }
 
-    async fn check(
-        &self,
-        tool: &str,
-        input: &Value,
-        patch: &str,
-        call: Call<'_>,
-    ) -> Option<String> {
+    async fn check(&self, tool: &str, input: &Value, patch: &str, call: Call<'_>) -> Verdict {
         if tool.starts_with("mcp__") {
-            return self.check_mcp(tool, input, call).await;
+            return refused(self.check_mcp(tool, input, call).await);
         }
         let mode = self.mode.read(|mode| *mode);
         if mode == Mode::FullAccess {
-            return None;
+            return Verdict::Run;
         }
         let (kind, summary, rule) = match classify(tool, input, patch) {
-            Action::Read | Action::Continue => return None,
+            Action::Read | Action::Continue => return Verdict::Run,
             Action::Command(command) => {
-                if mode != Mode::Plan && allowed_by(&self.rules(), &command) {
-                    return None;
+                let read_only = is_read_only(&command);
+                match (mode, &self.sandbox) {
+                    _ if mode != Mode::Plan && allowed_by(&self.rules(), &command) => {
+                        return Verdict::Run;
+                    }
+                    (Mode::Auto, Some((writable, _))) => return Verdict::Sandbox(writable.clone()),
+                    (_, Some((_, read_only_profile))) if read_only => {
+                        return Verdict::Sandbox(read_only_profile.clone());
+                    }
+                    (_, None) if read_only => return Verdict::Run,
+                    (Mode::Plan, _) => {
+                        return Verdict::Refuse(format!(
+                            "Plan mode allows only read-only commands, so `{command}` did not run."
+                        ));
+                    }
+                    _ => {
+                        let rule = suggested_rule(&command);
+                        ("command", command, rule)
+                    }
                 }
-                if is_read_only(&command) {
-                    return None;
-                }
-                if mode == Mode::Plan {
-                    return Some(format!(
-                        "Plan mode allows only read-only commands, so `{command}` did not run."
-                    ));
-                }
-                let rule = suggested_rule(&command);
-                ("command", command, rule)
             }
             Action::Edit(paths) => {
                 let outside = paths.iter().any(|path| !self.is_inside(path));
@@ -149,9 +158,11 @@ impl Gate {
                     .collect::<Vec<_>>()
                     .join(", ");
                 match mode {
-                    Mode::Plan => return Some("Plan mode does not allow edits.".to_owned()),
-                    Mode::Auto if !outside => return None,
-                    _ if !outside && allowed_by(&self.rules(), "Edit") => return None,
+                    Mode::Plan => {
+                        return Verdict::Refuse("Plan mode does not allow edits.".to_owned());
+                    }
+                    Mode::Auto if !outside => return Verdict::Run,
+                    _ if !outside && allowed_by(&self.rules(), "Edit") => return Verdict::Run,
                     _ if outside => ("outside_workspace", names, String::new()),
                     _ => ("edit", names, "Edit".to_owned()),
                 }
@@ -162,8 +173,62 @@ impl Gate {
         } else {
             patch.to_owned()
         };
-        self.ask(kind, summary, rule, tool, "", arguments, call)
+        refused(
+            self.ask(kind, summary, rule, tool, "", arguments, call)
+                .await,
+        )
+    }
+
+    async fn run_sandboxed(
+        &self,
+        tool: &dyn Tool,
+        input: ToolInput,
+        json: &Value,
+        context: ToolContext<'_>,
+        profile: &Path,
+    ) -> ToolResult {
+        let name = tool.definition().name().to_owned();
+        let key = if name == "exec_command" {
+            "cmd"
+        } else {
+            "command"
+        };
+        let Some(command) = json[key].as_str() else {
+            return tool.execute(input, context).await;
+        };
+        let mut wrapped = json.clone();
+        wrapped[key] = Value::String(crate::sandbox::wrap(command, profile));
+        let wrapped = serde_json::value::to_raw_value(&wrapped).map_err(text)?;
+        let output = tool.execute(ToolInput::Function(wrapped), context).await?;
+        let shown = serde_json::to_string(&output.output).unwrap_or_default();
+        if !crate::sandbox::denied(&shown) {
+            return Ok(output);
+        }
+        let call = Call {
+            id: context.call_id(),
+            session: context.session_id(),
+        };
+        let rule = suggested_rule(command);
+        match self
+            .ask(
+                "outside_sandbox",
+                command.to_owned(),
+                rule,
+                &name,
+                "",
+                json.to_string(),
+                call,
+            )
             .await
+        {
+            None => tool.execute(input, context).await,
+            Some(refusal) => Ok(ToolOutput::error(format!(
+                "The sandbox refused this command, and {}\n\nSandboxed output:\n{shown}",
+                refusal
+                    .trim_end_matches('.')
+                    .replacen("The user", "the user", 1)
+            ))),
+        }
     }
 
     async fn check_mcp(&self, tool: &str, input: &Value, call: Call<'_>) -> Option<String> {
@@ -321,8 +386,13 @@ impl Tool for Gated {
                 session: context.session_id(),
             };
             match self.gate.check(&name, &json, patch, call).await {
-                None => self.inner.execute(input, context).await,
-                Some(refusal) => Ok(ToolOutput::error(refusal)),
+                Verdict::Run => self.inner.execute(input, context).await,
+                Verdict::Refuse(refusal) => Ok(ToolOutput::error(refusal)),
+                Verdict::Sandbox(profile) => {
+                    self.gate
+                        .run_sandboxed(self.inner.as_ref(), input, &json, context, &profile)
+                        .await
+                }
             }
         })
     }
@@ -372,6 +442,10 @@ impl WorkspaceExecutor for GatedExecutor {
     fn cancel<'a>(&'a self) -> BoxFuture<'a, ()> {
         self.inner.cancel()
     }
+}
+
+fn refused(refusal: Option<String>) -> Verdict {
+    refusal.map_or(Verdict::Run, Verdict::Refuse)
 }
 
 fn classify(tool: &str, input: &Value, patch: &str) -> Action {

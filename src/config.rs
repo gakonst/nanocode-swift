@@ -269,7 +269,10 @@ impl Configuration {
         };
         let files = Arc::new(NativeFiles);
         let tools = match (workspace, selection, family) {
-            (Some(_), WorkspaceTools::All, _) => Tools::builder()
+            (Some(root), WorkspaceTools::All, Provider::Claude) => {
+                return nanocode::claude::runner_tools(root).map_err(|error| error.to_string());
+            }
+            (Some(_), WorkspaceTools::All, Provider::Codex) => Tools::builder()
                 .web_search(false)
                 .image_generation(false)
                 .build(),

@@ -10,6 +10,7 @@ mod hand;
 mod mcp;
 mod payments;
 mod runner;
+mod sandbox;
 mod session;
 mod tools;
 mod wallet;

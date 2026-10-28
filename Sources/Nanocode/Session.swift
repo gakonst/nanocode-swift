@@ -233,6 +233,7 @@ public struct SessionConfiguration: Sendable {
   public var mcpServers: [McpServer] = []
   public var permissionMode: PermissionMode?
   public var allow: [String] = []
+  public var observeEdits = false
   public var fork: Fork?
   public var sessionID: String
   public var provider: Provider
@@ -307,6 +308,7 @@ public struct SessionConfiguration: Sendable {
     if !mcpServers.isEmpty { object["mcp_servers"] = .array(mcpServers.map(\.json)) }
     if let permissionMode { object["permission_mode"] = .string(permissionMode.rawValue) }
     if !allow.isEmpty { object["allow"] = .array(allow.map(JSON.string)) }
+    if observeEdits { object["observe_edits"] = true }
     if let fork { object["fork"] = fork.json }
     return .object(object)
   }

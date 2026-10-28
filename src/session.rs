@@ -174,9 +174,14 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     tokio::fs::create_dir_all(&workspace)
         .await
         .map_err(|error| format!("create {}: {error}", workspace.display()))?;
-    let gate = config
-        .permission_mode
-        .map(|mode| Gate::new(host, &workspace, mode));
+    let gate = (config.permission_mode.is_some() || config.observe_edits).then(|| {
+        Gate::new(
+            host,
+            &workspace,
+            config.permission_mode.unwrap_or(Mode::FullAccess),
+            config.observe_edits,
+        )
+    });
     if !config.allow.is_empty() {
         host.rules.update(|rules| {
             for rule in &config.allow {

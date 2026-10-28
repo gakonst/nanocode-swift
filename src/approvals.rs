@@ -54,15 +54,17 @@ pub struct Gate {
     host: Weak<Host>,
     workspace: PathBuf,
     sandbox: Option<(PathBuf, PathBuf)>,
+    observe: bool,
     mode: Atom<Mode>,
     allowed_mcp: Atom<HashSet<String>>,
 }
 
 impl Gate {
-    pub fn new(host: &Arc<Host>, workspace: &Path, mode: Mode) -> Arc<Self> {
+    pub fn new(host: &Arc<Host>, workspace: &Path, mode: Mode, observe: bool) -> Arc<Self> {
         Arc::new(Self {
             host: Arc::downgrade(host),
             sandbox: crate::sandbox::profiles(workspace),
+            observe,
             workspace: std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_owned()),
             mode: Atom::new(mode),
             allowed_mcp: Atom::default(),
@@ -310,6 +312,26 @@ impl Gate {
         }
     }
 
+    async fn will_edit(&self, tool: &str, input: &Value, patch: &str, call: Call<'_>) {
+        if !self.observe {
+            return;
+        }
+        let (Action::Edit(paths), Some(host)) = (classify(tool, input, patch), self.host.upgrade())
+        else {
+            return;
+        };
+        let paths: Vec<String> = paths
+            .iter()
+            .map(|path| self.workspace.join(path).display().to_string())
+            .collect();
+        let _ = host
+            .call(
+                "will_edit",
+                json!({"session_id": call.session, "paths": paths}),
+            )
+            .await;
+    }
+
     fn is_inside(&self, path: &Path) -> bool {
         let path = if path.is_absolute() {
             path.to_path_buf()
@@ -386,7 +408,10 @@ impl Tool for Gated {
                 session: context.session_id(),
             };
             match self.gate.check(&name, &json, patch, call).await {
-                Verdict::Run => self.inner.execute(input, context).await,
+                Verdict::Run => {
+                    self.gate.will_edit(&name, &json, patch, call).await;
+                    self.inner.execute(input, context).await
+                }
                 Verdict::Refuse(refusal) => Ok(ToolOutput::error(refusal)),
                 Verdict::Sandbox(profile) => {
                     self.gate

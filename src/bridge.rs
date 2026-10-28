@@ -58,6 +58,7 @@ pub struct Host {
     pub hands: Hands,
     pub runners: Runners,
     pub payments: Payments,
+    pub rules: Atom<Vec<String>>,
 }
 
 struct Forget<'a>(&'a Host, u64);
@@ -159,6 +160,7 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         hands: Hands::default(),
         runners: Runners::default(),
         payments,
+        rules: Atom::default(),
     });
     host.payments.attach(&host);
     Ok(Handle { host, runtime })

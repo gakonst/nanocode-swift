@@ -156,6 +156,10 @@ pub struct Configuration {
     pub event_coalesce_ms: u64,
     #[serde(default)]
     pub environment: Option<Environment>,
+    #[serde(default)]
+    pub permission_mode: Option<crate::approvals::Mode>,
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
 const fn enabled() -> bool {

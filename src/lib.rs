@@ -1,5 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
+mod approvals;
 mod bridge;
 mod catalog;
 mod command;

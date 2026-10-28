@@ -162,6 +162,8 @@ public struct McpServer: Sendable, Hashable {
 public struct SessionConfiguration: Sendable {
   public var hands: [HandLink] = []
   public var mcpServers: [McpServer] = []
+  public var permissionMode: PermissionMode?
+  public var allow: [String] = []
   public var sessionID: String
   public var provider: Provider
   public var model: String?
@@ -233,6 +235,8 @@ public struct SessionConfiguration: Sendable {
     if let environment { object["environment"] = environment.json }
     if !hands.isEmpty { object["hands"] = .array(hands.map(\.json)) }
     if !mcpServers.isEmpty { object["mcp_servers"] = .array(mcpServers.map(\.json)) }
+    if let permissionMode { object["permission_mode"] = .string(permissionMode.rawValue) }
+    if !allow.isEmpty { object["allow"] = .array(allow.map(JSON.string)) }
     return .object(object)
   }
 }
@@ -378,6 +382,10 @@ public final class Session: Sendable {
   @discardableResult
   public func compact() async throws -> JSON {
     try await runtime.command("compact", ["session": .string(id)])
+  }
+
+  public func setPermissionMode(_ mode: PermissionMode) async throws {
+    try await runtime.command("permission_mode", ["session": .string(id), "mode": .string(mode.rawValue)])
   }
 
   public func preconnect() async throws {

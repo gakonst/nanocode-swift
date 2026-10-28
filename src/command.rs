@@ -78,6 +78,10 @@ pub enum Command {
     Preconnect {
         session: String,
     },
+    PermissionMode {
+        session: String,
+        mode: crate::approvals::Mode,
+    },
     Settle {
         session: String,
     },
@@ -200,6 +204,9 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
         }
         Command::Compact { session } => host.sessions.get(&session)?.compact().await,
         Command::Preconnect { session } => host.sessions.get(&session)?.preconnect().await,
+        Command::PermissionMode { session, mode } => {
+            host.sessions.get(&session)?.set_permission_mode(mode)
+        }
         Command::Settle { session } => host
             .sessions
             .get(&session)?

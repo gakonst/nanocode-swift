@@ -9,8 +9,8 @@ use std::{
 };
 
 use nanocode::{
-    ClaudeHarness, CodexHarness, ModelSelection, ModelTransport, Nanocode, NanocodeError,
-    SubagentControl, Thinking, Tool,
+    ClaudeHarness, CodexHarness, ForkRequest, ModelSelection, ModelTransport, Nanocode,
+    NanocodeError, Origin, SubagentControl, Thinking, Tool,
     agent::input::UserInput,
     backend::Prompt,
     backend::ToolCollection as _,
@@ -19,8 +19,8 @@ use nanocode::{
         StoreError, StoreFuture,
     },
     session_host::{
-        Driven, InboxError, InboxHost, LoggedEvent, MovedQueued, Replaced, SessionLog, Submission,
-        Submitted, TurnInbox, TurnRecord,
+        Driven, InboxError, InboxHost, LogEntry, LoggedEvent, MovedQueued, Replaced, SessionLog,
+        Submission, Submitted, TurnInbox, TurnRecord,
     },
 };
 use nanocode_code_mode::embedded::HostFuture;
@@ -32,7 +32,7 @@ use tokio::sync::Notify;
 use crate::{
     approvals::{Gate, Mode},
     bridge::Host,
-    config::{Configuration, Provider},
+    config::{Configuration, Fork, Provider},
 };
 
 #[derive(Clone)]
@@ -158,13 +158,15 @@ pub fn described(record: &TurnRecord) -> Result<Value, String> {
 }
 
 pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, String> {
-    if let Ok(existing) = host.sessions.get(&config.session_id) {
+    if config.fork.is_none()
+        && let Ok(existing) = host.sessions.get(&config.session_id)
+    {
         return Ok(summary(&existing));
     }
     let storage = host.storage().await?;
     let model = config.model()?;
     let thinking = config.thinking()?;
-    let session_id = config.session_id.clone();
+    let mut session_id = config.session_id.clone();
     let workspace = config
         .workspace
         .clone()
@@ -285,6 +287,15 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         .build_async()
         .await
         .map_err(|error| format!("build runtime: {error}"))?;
+    if let Some(fork) = &config.fork {
+        session_id = match forked(host, &storage, &runtime, fork, model.clone(), thinking).await {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = runtime.shutdown().await;
+                return Err(error);
+            }
+        };
+    }
     let subagents = runtime.subagents().cloned();
     let inbox_host = Arc::new(AppInbox {
         host: Arc::downgrade(host),
@@ -338,6 +349,59 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     tokio::spawn(async move { completions.inbox.deliver_completions().await });
     tokio::spawn(drive(Arc::downgrade(host), Arc::clone(&session)));
     Ok(summary(&session))
+}
+
+async fn forked(
+    host: &Host,
+    storage: &Storage,
+    runtime: &Nanocode,
+    fork: &Fork,
+    model: ModelSelection,
+    thinking: Option<Thinking>,
+) -> Result<String, String> {
+    let parent = host.sessions.get(&fork.session)?;
+    let agent = parent.inbox.agent();
+    let (child, _) = match (&fork.checkpoint, &fork.before) {
+        (Some(checkpoint), Some(_)) => agent.fork(ForkRequest::at(checkpoint.clone())).await,
+        (None, None) => runtime.switch(agent, model, thinking).await,
+        _ => return Err("fork takes a checkpoint and the turn it precedes together".into()),
+    }
+    .map_err(text)?;
+    let id = child.session_id().to_owned();
+    child.shutdown().await.map_err(text)?;
+    let end = match &fork.before {
+        Some(request_id) => {
+            parent
+                .inbox
+                .log()
+                .turn(request_id)
+                .await
+                .map_err(text)?
+                .ok_or_else(|| format!("turn {request_id} is not in session {}", fork.session))?
+                .first_seq
+        }
+        None => u64::MAX,
+    };
+    let log = storage.log(&id);
+    log.migrate().await.map_err(text)?;
+    let mut after = 0;
+    loop {
+        let page = parent.inbox.log().page(after, 500).await.map_err(text)?;
+        let entries: Vec<LogEntry> = page
+            .events
+            .iter()
+            .take_while(|event| event.seq < end)
+            .map(|event| LogEntry {
+                request_id: event.request_id.clone(),
+                event: event.event.clone(),
+            })
+            .collect();
+        log.append(&entries).await.map_err(text)?;
+        if !page.has_more || entries.len() < page.events.len() {
+            return Ok(id);
+        }
+        after = page.next_cursor;
+    }
 }
 
 fn summary(session: &Session) -> Value {
@@ -580,6 +644,11 @@ impl Session {
         Ok(Value::Null)
     }
 
+    pub async fn checkpoint(&self) -> Result<Value, String> {
+        let checkpoint = self.inbox.agent().checkpoint().await.map_err(text)?;
+        serde_json::to_value(checkpoint).map_err(text)
+    }
+
     pub async fn preconnect(&self) -> Result<Value, String> {
         self.inbox.agent().preconnect().await.map_err(text)?;
         Ok(Value::Null)
@@ -645,7 +714,10 @@ pub async fn list(host: &Host) -> Result<Value, String> {
     Ok(Value::Array(
         sessions
             .into_iter()
-            .filter(|summary| summary.record.lineage.parent_session_id.is_none())
+            .filter(|summary| {
+                summary.record.lineage.parent_session_id.is_none()
+                    || summary.record.lineage.origin == Origin::Fork
+            })
             .map(|summary| {
                 let id = summary.record.session_id.clone();
                 json!({

@@ -259,6 +259,14 @@ final class Router: @unchecked Sendable {
       }
       return
     }
+    if call["kind"]?.string == "mcp_credentials" {
+      do {
+        send(["command": ["reply": ["id": .number(Double(id)), "ok": try McpCredentials.answer(body)]]])
+      } catch {
+        send(["command": ["reply": ["id": .number(Double(id)), "error": .string(error.localizedDescription)]]])
+      }
+      return
+    }
     guard call["kind"]?.string == "tool", let name = body["name"]?.string else {
       send(["command": ["reply": ["id": .number(Double(id)), "error": "this app does not answer that call"]]])
       return

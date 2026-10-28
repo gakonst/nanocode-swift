@@ -7,6 +7,7 @@ mod command;
 mod config;
 mod files;
 mod hand;
+mod mcp;
 mod payments;
 mod runner;
 mod session;

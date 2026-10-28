@@ -29,7 +29,7 @@ use nanocode::{
     http::{self as layer, BoxFuture, Event, EventHook, Layer, Next},
 };
 use nanocode_mcp_tools::{
-    Mcp, McpPaymentManagement, McpPaymentProvider, McpPendingPayment, McpServer,
+    Mcp, McpOAuthStore, McpPaymentManagement, McpPaymentProvider, McpPendingPayment, McpServer,
 };
 use nanocode_sync::Atom;
 use reqwest::ResponseBuilderExt;
@@ -289,11 +289,12 @@ impl Payments {
     pub async fn mcp_tools(
         &self,
         servers: &[McpServerConfig],
+        credentials: Arc<dyn McpOAuthStore>,
     ) -> Result<Vec<Arc<dyn Tool>>, String> {
         if servers.is_empty() {
             return Ok(Vec::new());
         }
-        let mut mcp = Mcp::builder();
+        let mut mcp = Mcp::builder().oauth_store(credentials);
         for config in servers {
             if let Some((program, arguments)) = config.command.split_first() {
                 if cfg!(target_os = "ios") {

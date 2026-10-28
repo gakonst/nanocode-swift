@@ -193,7 +193,10 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     if config.paid_tools {
         servers.extend(crate::payments::Payments::paid_servers());
     }
-    let mcp = host.payments.mcp_tools(&servers).await?;
+    let mcp = host
+        .payments
+        .mcp_tools(&servers, crate::mcp::Credentials::of(host))
+        .await?;
     shared.extend(mcp.into_iter().map(|tool| match &gate {
         Some(gate) => gate.wrap(tool),
         None => tool,

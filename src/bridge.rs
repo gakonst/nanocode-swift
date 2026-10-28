@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use nanocode_mcp_tools::McpLogin;
 use nanocode_sync::{Atom, Slot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -59,6 +60,7 @@ pub struct Host {
     pub runners: Runners,
     pub payments: Payments,
     pub rules: Atom<Vec<String>>,
+    pub logins: Atom<HashMap<String, Arc<Slot<McpLogin>>>>,
 }
 
 struct Forget<'a>(&'a Host, u64);
@@ -161,6 +163,7 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         runners: Runners::default(),
         payments,
         rules: Atom::default(),
+        logins: Atom::default(),
     });
     host.payments.attach(&host);
     Ok(Handle { host, runtime })

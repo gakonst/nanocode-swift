@@ -187,6 +187,45 @@ public struct Fork: Sendable {
   }
 }
 
+public struct McpSignIn: Sendable {
+  public let server: String
+  public let authorizationURL: URL
+  let runtime: NanocodeRuntime
+
+  public func wait() async throws -> Int {
+    try await runtime.command("mcp_sign_in_wait", ["server": .string(server)])["tools"]?.int ?? 0
+  }
+}
+
+enum McpCredentials {
+  static let keychainService = "xyz.nanocode.mcp"
+
+  static func answer(_ body: JSON) throws -> JSON {
+    if let load = body["load"], let account = account(load) {
+      return Keychain.load(service: keychainService, account: account).flatMap { try? JSON.parse($0) } ?? .null
+    }
+    if let save = body["save"], let account = account(save), let credentials = save["credentials"] {
+      try Keychain.save(credentials.data(), service: keychainService, account: account)
+    }
+    return .null
+  }
+
+  private static func account(_ body: JSON) -> String? {
+    guard let server = body["server"]?.string, let url = body["url"]?.string else { return nil }
+    return "\(server) \(url)"
+  }
+}
+
+extension NanocodeRuntime {
+  public func signIn(to server: McpServer) async throws -> McpSignIn {
+    let started = try await command("mcp_sign_in", server.json)
+    guard let url = started["authorization_url"]?.string.flatMap(URL.init(string:)) else {
+      throw NanocodeError("the sign-in to \(server.name) has no authorization URL")
+    }
+    return McpSignIn(server: server.name, authorizationURL: url, runtime: self)
+  }
+}
+
 public struct SessionConfiguration: Sendable {
   public var hands: [HandLink] = []
   public var mcpServers: [McpServer] = []

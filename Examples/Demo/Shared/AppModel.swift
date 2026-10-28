@@ -68,9 +68,16 @@ struct ModelOption: Identifiable, Hashable {
 
 enum Access: String, CaseIterable, Identifiable {
   case tempo
+  case plan
   case keys
   var id: String { rawValue }
-  var label: String { self == .tempo ? "Tempo Wallet (MPP)" : "API keys" }
+  var label: String {
+    switch self {
+    case .tempo: "Tempo Wallet"
+    case .plan: "ChatGPT or Claude plan"
+    case .keys: "API keys"
+    }
+  }
 }
 
 @MainActor
@@ -99,6 +106,7 @@ final class AppModel {
 
   let runtime: NanocodeRuntime
   let wallet: WalletMonitor
+  let plans: PlanMonitor
   let hand: HandMonitor
   var catalog: ModelCatalog?
   var conversations: [SessionSummary] = []
@@ -138,6 +146,7 @@ final class AppModel {
     }
     wallet = WalletMonitor(runtime: runtime, name: "nanocode for \(AppModel.platform)", website: "https://nanocode.xyz")
     hand = HandMonitor(runtime: runtime)
+    plans = PlanMonitor(runtime: runtime, store: KeychainSubscriptionStore(service: "xyz.nanocode.demo.plans"))
     cloudHand = HandMonitor(runtime: runtime, id: "cloud")
     do {
       remoteStore = try RemoteStore(directory: runtime.dataDirectory.appendingPathComponent("remote", isDirectory: true))
@@ -243,6 +252,7 @@ final class AppModel {
   func start() async {
     catalog = try? await runtime.models()
     await wallet.restore()
+    await plans.refresh()
     if UserDefaults.standard.string(forKey: "NanocodeWallet") == "cli" { await wallet.useTempoCLI() }
     if let provider = UserDefaults.standard.string(forKey: "NanocodeProvider").flatMap(Provider.init(rawValue:)),
        let model = UserDefaults.standard.string(forKey: "NanocodeModel") {
@@ -292,6 +302,7 @@ final class AppModel {
   func authentication(for provider: Provider) -> Authentication {
     switch access {
     case .tempo: return .tempo
+    case .plan: return .plan
     case .keys: return .apiKey(provider == .claude ? anthropicKey : openaiKey)
     }
   }
@@ -376,6 +387,20 @@ final class AppModel {
       session.hand = nil
       cloudHand.error = error.localizedDescription
     }
+  }
+
+  func setAccess(_ access: Access) async {
+    guard access != self.access else { return }
+    self.access = access
+    saveKeys()
+    if runner == .device, !chat.pending { await newChat() }
+  }
+
+  func signedIn() async {
+    await plans.refresh()
+    if access != .plan { access = .plan }
+    saveKeys()
+    if runner == .device, !chat.pending { await newChat() }
   }
 
   func setDeviceHand(_ on: Bool) async {

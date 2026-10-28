@@ -135,6 +135,10 @@ final class DemoController: KitViewController {
     case .device: break
     }
     if model.access == .keys { return "API keys" }
+    if model.access == .plan {
+      let name = model.style.provider == .codex ? "ChatGPT" : "Claude"
+      return model.plans.isSignedIn(model.style.provider) ? "\(name) plan" : "Sign in with \(name)"
+    }
     if let account = model.wallet.status?.account { return account.count > 12 ? "\(account.prefix(6))…\(account.suffix(4))" : account }
     return model.wallet.connecting ? "Connecting…" : "Connect Tempo Wallet"
   }

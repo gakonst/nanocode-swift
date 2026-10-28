@@ -61,6 +61,41 @@ func show(_ chat: Chat, from printed: inout Int) {
   printed = chat.entries.count
 }
 
+if arguments.first == "plan" {
+  let values = Array(arguments.dropFirst())
+  guard let provider = values.first.map({ $0 == "chatgpt" ? Provider.codex : $0 == "claude" ? .claude : nil }) ?? nil else {
+    print("usage: Console plan chatgpt|claude [status|signout|<code from the Claude page>]")
+    exit(2)
+  }
+  let runtime = try NanocodeRuntime(dataDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console", isDirectory: true))
+  runtime.setSubscriptionStore(KeychainSubscriptionStore(service: "xyz.nanocode.console.plans"))
+  switch values.dropFirst().first {
+  case "status":
+    print("[plan] \(try await runtime.planStatus(provider))")
+  case "signout":
+    try await runtime.signOut(plan: provider)
+    print("[plan] signed out")
+  case let code?:
+    print("[plan] \(try await runtime.command("plan_sign_in_complete", ["code": .string(code)]).text())")
+  case nil:
+    let signIn = try await runtime.signIn(plan: provider)
+    switch signIn.step {
+    case .openURL(let url): print("[plan] open \(url.absoluteString)\n[plan] then run: Console plan claude <code>")
+    case .enterCode(let url, let code):
+      print("[plan] enter \(code) at \(url.absoluteString)")
+      for _ in 0..<300 {
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        let status = try await signIn.status()
+        if !status.isPending {
+          print("[plan] \(status.state) \(status.accountID ?? "")")
+          break
+        }
+      }
+    }
+  }
+  exit(0)
+}
+
 if arguments.first == "remote-resume" {
   let store = try RemoteStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console-remote", isDirectory: true))
   let id = arguments.dropFirst().first

@@ -162,6 +162,9 @@ final class SettingsController: KitViewController {
   let computer: StackView
   let hand: StackView
   var keys: KitView?
+  let plansBox: StackView
+  var plansObserver: Observer?
+  var claudeCode = ""
   var servers: KitView?
   let cloud: StackView
   var handCommand = ""
@@ -179,6 +182,7 @@ final class SettingsController: KitViewController {
     computer = form.stack()
     hand = form.stack()
     cloud = form.stack()
+    plansBox = form.stack(spacing: 10)
     super.init(nibName: nil, bundle: nil)
     title = "Settings"
   }
@@ -233,11 +237,12 @@ final class SettingsController: KitViewController {
       section("Models", [
         form.segmented(Access.allCases.map(\.label), selected: Access.allCases.firstIndex(of: model.access) ?? 0) { [weak self] index in
           guard let self else { return }
-          self.model.access = Access.allCases[index]
-          self.model.saveKeys()
-          self.keys?.isHidden = self.model.access != .keys
+          let access = Access.allCases[index]
+          self.keys?.isHidden = access != .keys
+          Task { await self.model.setAccess(access) }
         },
         keys,
+        plansBox,
       ]),
       section("Tempo Wallet", [
         wallet,
@@ -283,6 +288,70 @@ final class SettingsController: KitViewController {
     view = scroll
     #endif
     observer = Observer { [weak self] in self?.refresh() }
+    plansObserver = Observer { [weak self] in self?.renderPlans() }
+  }
+
+  func renderPlans() {
+    let plans = model.plans
+    plansBox.isHidden = model.access != .plan
+    form.clear(plansBox)
+    plansBox.addArrangedSubview(form.label("Turns run on this device and are billed to your own ChatGPT or Claude subscription. Sign-ins stay in this device's Keychain.", secondary: true))
+    for provider in [Provider.codex, .claude] {
+      let name = provider == .codex ? "ChatGPT" : "Claude"
+      let status = plans.status[provider]
+      let busy = plans.busy.contains(provider)
+      var views: [KitView] = []
+      if status?.isSignedIn == true {
+        let account = status?.accountID.map { " as \($0.count > 14 ? "\($0.prefix(8))…" : $0)" } ?? ""
+        views.append(form.label("\(name): signed in\(account)", weight: .medium))
+        views.append(form.button("Sign out of \(name)", destructive: true) { Task { await plans.signOut(provider) } })
+      } else if let signIn = plans.signIns[provider] {
+        switch signIn.step {
+        case .enterCode(let url, let code):
+          views.append(form.label("Enter this code on the ChatGPT page that opened (\(url.host() ?? url.absoluteString)):", secondary: true))
+          views.append(form.label(code, size: 26, weight: .bold, mono: true, selectable: true))
+          views.append(form.stack([
+            form.button("Open ChatGPT sign-in", prominent: true) { NanocodeKit.open(url) },
+            form.button("Cancel") { plans.cancel(provider) },
+          ], vertical: false))
+          views.append(form.label("Waiting for you to approve it…", size: 12, secondary: true))
+        case .openURL(let url):
+          views.append(form.label("Sign in on the Claude page that opened, then paste the code it shows here.", secondary: true))
+          views.append(form.field("Paste the code", value: claudeCode, mono: true) { [weak self] in self?.claudeCode = $0 })
+          views.append(form.stack([
+            form.button(busy ? "Finishing…" : "Finish sign-in", prominent: true) { [weak self] in
+              guard let self else { return }
+              let code = self.claudeCode
+              Task {
+                await plans.complete(provider, code: code)
+                if plans.isSignedIn(provider) {
+                  self.claudeCode = ""
+                  await self.model.signedIn()
+                }
+              }
+            },
+            form.button("Open Claude sign-in") { NanocodeKit.open(url) },
+            form.button("Cancel") { plans.cancel(provider) },
+          ], vertical: false))
+        }
+      } else {
+        views.append(form.label("\(name): \(status.map { $0.state.replacingOccurrences(of: "_", with: " ") } ?? "signed out")", secondary: true))
+        views.append(form.button(busy ? "Starting…" : "Sign in with \(name)", prominent: true) { [weak self] in
+          Task {
+            guard let signIn = await plans.signIn(provider) else { return }
+            switch signIn.step {
+            case .enterCode(let url, _), .openURL(let url): NanocodeKit.open(url)
+            }
+            if provider == .codex {
+              while plans.signIns[provider] != nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+              if plans.isSignedIn(provider) { await self?.model.signedIn() }
+            }
+          }
+        })
+      }
+      plansBox.addArrangedSubview(form.stack(views, spacing: 6))
+    }
+    if let error = plans.error { plansBox.addArrangedSubview(form.label(error, danger: true)) }
   }
 
   func refresh() {

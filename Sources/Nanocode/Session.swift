@@ -314,6 +314,22 @@ public struct SessionConfiguration: Sendable {
   }
 }
 
+public struct PromptFile: Sendable, Hashable {
+  public let filename: String
+  public let dataURL: String
+
+  public init(filename: String, dataURL: String) {
+    self.filename = filename
+    self.dataURL = dataURL
+  }
+
+  public init(filename: String, mediaType: String, data: Data) {
+    self.init(filename: filename, dataURL: "data:\(mediaType);base64,\(data.base64EncodedString())")
+  }
+
+  var json: JSON { ["file_data": .string(dataURL), "filename": .string(filename)] }
+}
+
 public struct SessionSummary: Sendable, Identifiable, Hashable {
   public let id: String
   public let model: String
@@ -379,19 +395,20 @@ public final class Session: Sendable {
   public var events: AsyncStream<SessionEvent> { runtime.events(session: id) }
 
   @discardableResult
-  public func submit(_ prompt: String, images: [String] = [], requestID: String = Identifier.uuidv7(),
-                     metadata: JSON = [:]) async throws -> Submitted {
+  public func submit(_ prompt: String, images: [String] = [], files: [PromptFile] = [],
+                     requestID: String = Identifier.uuidv7(), metadata: JSON = [:]) async throws -> Submitted {
     let result = try await runtime.command("submit", [
       "session": .string(id), "request_id": .string(requestID), "prompt": .string(prompt),
-      "images": .array(images.map(JSON.string)), "metadata": metadata,
+      "images": .array(images.map(JSON.string)), "files": .array(files.map(\.json)), "metadata": metadata,
     ])
     return Submitted(status: result["submitted"]?.string ?? "", turn: result["turn"].map(TurnReport.init))
   }
 
-  public func steer(_ prompt: String, images: [String] = [], requestID: String = Identifier.uuidv7(), into: String? = nil) async throws -> Bool {
+  public func steer(_ prompt: String, images: [String] = [], files: [PromptFile] = [],
+                    requestID: String = Identifier.uuidv7(), into: String? = nil) async throws -> Bool {
     var body: [String: JSON] = [
       "session": .string(id), "request_id": .string(requestID), "prompt": .string(prompt),
-      "images": .array(images.map(JSON.string)),
+      "images": .array(images.map(JSON.string)), "files": .array(files.map(\.json)),
     ]
     if let into { body["into"] = .string(into) }
     return try await runtime.command("steer", .object(body)).bool ?? false

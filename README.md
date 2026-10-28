@@ -29,6 +29,17 @@ The demo app runs the same agent in one of three places (Settings, or View ▸ R
 - **Cloudflare.** The agent runs in the [Cloudflare demo](https://nanocode.xyz/cloudflare)'s Durable Object. The app is a native client of it, so the turn keeps going while the phone sleeps or the app is closed, and the app catches up from its event cursor when it comes back. The app can also attach this device as the cloud agent's hand, so the agent's Code Mode cells and device tools (`device_info`, `open_url`, `clipboard`, `speak`) run on the phone or Mac.
 - **Vercel.** The same, with the agent in the [Vercel demo](https://nanocode.xyz/vercel)'s Workflow.
 
+<table>
+  <tr>
+    <td><img src="assets/demo-cloudflare.gif" alt="Claude-style demo with the agent in the Cloudflare Durable Object: Claude Haiku 5.5 calls device_info on this Mac, attached as the session's hand" width="100%"></td>
+    <td><img src="assets/demo-vercel.gif" alt="ChatGPT-style demo with the agent in a Vercel Workflow: GPT-6 Luna runs a JavaScript cell and answers 5050" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center">Cloudflare · the cloud agent runs <code>device_info</code> on this Mac, its hand</td>
+    <td align="center">Vercel · GPT-6 Luna runs a Code Mode cell in the Workflow</td>
+  </tr>
+</table>
+
 ```swift
 let store = try RemoteStore(directory: dataDirectory.appendingPathComponent("remote"))
 let session = RemoteSession.create(server: .cloudflare(), store: store, provider: .claude, model: "claude-haiku-5-5", thinking: "low")

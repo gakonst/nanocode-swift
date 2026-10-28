@@ -77,6 +77,49 @@ public enum ToolResult: Sendable {
   }
 }
 
+public enum PermissionMode: String, Sendable, CaseIterable {
+  case plan
+  case readOnly = "read_only"
+  case auto
+  case fullAccess = "full_access"
+}
+
+public struct ApprovalRequest: Sendable {
+  public let id: String
+  public let sessionID: String
+  public let tool: String
+  public let kind: String
+  public let summary: String
+  public let server: String
+  public let arguments: String
+  public let suggestedRule: String
+
+  init(_ json: JSON) {
+    id = json["id"]?.string ?? ""
+    sessionID = json["session_id"]?.string ?? ""
+    tool = json["tool"]?.string ?? ""
+    kind = json["kind"]?.string ?? ""
+    summary = json["summary"]?.string ?? ""
+    server = json["server"]?.string ?? ""
+    arguments = json["arguments"]?.string ?? ""
+    suggestedRule = json["suggested_rule"]?.string ?? ""
+  }
+}
+
+public enum ApprovalDecision: Sendable {
+  case allow
+  case allowAlways(rule: String)
+  case deny(feedback: String? = nil)
+
+  var json: JSON {
+    switch self {
+    case .allow: "allow"
+    case .allowAlways(let rule): ["allow_always": .string(rule)]
+    case .deny(let feedback): ["deny": feedback.map(JSON.string) ?? .null]
+    }
+  }
+}
+
 public struct HostTool: Sendable {
   public let name: String
   public let description: String
@@ -110,6 +153,7 @@ final class Router: @unchecked Sendable {
     var sessions: [String: [UUID: AsyncStream<SessionEvent>.Continuation]] = [:]
     var listeners: [UUID: AsyncStream<RuntimeEvent>.Continuation] = [:]
     var tools: [String: HostTool] = [:]
+    var approve: (@Sendable (ApprovalRequest) async -> ApprovalDecision)?
     var stopped = false
   }
 
@@ -204,6 +248,17 @@ final class Router: @unchecked Sendable {
   private func handle(call: JSON) {
     guard let id = call["id"]?.uint64 else { return }
     let body = call["body"] ?? .null
+    if call["kind"]?.string == "approval" {
+      guard let approve = state.withLock({ $0.approve }) else {
+        send(["command": ["reply": ["id": .number(Double(id)), "error": "this app does not answer approvals"]]])
+        return
+      }
+      Task.detached { [weak self] in
+        let decision = await approve(ApprovalRequest(body))
+        self?.send(["command": ["reply": ["id": .number(Double(id)), "ok": decision.json]]])
+      }
+      return
+    }
     guard call["kind"]?.string == "tool", let name = body["name"]?.string else {
       send(["command": ["reply": ["id": .number(Double(id)), "error": "this app does not answer that call"]]])
       return
@@ -321,6 +376,10 @@ public final class NanocodeRuntime: @unchecked Sendable {
     router.state.withLock { state in
       for tool in tools { state.tools[tool.name] = tool }
     }
+  }
+
+  public func setApprovalHandler(_ approve: @escaping @Sendable (ApprovalRequest) async -> ApprovalDecision) {
+    router.state.withLock { $0.approve = approve }
   }
 
   public var events: AsyncStream<RuntimeEvent> { router.subscribe() }

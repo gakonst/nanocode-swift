@@ -30,6 +30,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::Notify;
 
 use crate::{
+    approvals::{Gate, Mode},
     bridge::Host,
     config::{Configuration, Provider},
 };
@@ -79,6 +80,7 @@ pub struct Session {
     wake: Notify,
     closed: AtomicBool,
     pub subagents: Option<SubagentControl>,
+    gate: Option<Arc<Gate>>,
 }
 
 #[derive(Default)]
@@ -163,6 +165,25 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     let model = config.model()?;
     let thinking = config.thinking()?;
     let session_id = config.session_id.clone();
+    let workspace = config
+        .workspace
+        .clone()
+        .unwrap_or_else(|| host.data_dir.join("workspace"));
+    tokio::fs::create_dir_all(&workspace)
+        .await
+        .map_err(|error| format!("create {}: {error}", workspace.display()))?;
+    let gate = config
+        .permission_mode
+        .map(|mode| Gate::new(host, &workspace, mode));
+    if !config.allow.is_empty() {
+        host.rules.update(|rules| {
+            for rule in &config.allow {
+                if !rules.contains(rule) {
+                    rules.push(rule.clone());
+                }
+            }
+        });
+    }
     let mut shared: Vec<Arc<dyn Tool>> = crate::tools::tools(host, config.tools.clone())
         .map(|tool| Arc::new(tool) as Arc<dyn Tool>)
         .collect();
@@ -170,7 +191,11 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     if config.paid_tools {
         servers.extend(crate::payments::Payments::paid_servers());
     }
-    shared.extend(host.payments.mcp_tools(&servers).await?);
+    let mcp = host.payments.mcp_tools(&servers).await?;
+    shared.extend(mcp.into_iter().map(|tool| match &gate {
+        Some(gate) => gate.wrap(tool),
+        None => tool,
+    }));
     let mut builder = Nanocode::builder();
     let claude_client = match config.provider {
         Provider::Claude => Some(crate::config::claude_client(&config, &host.payments)?),
@@ -178,6 +203,9 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     };
     if let Some(client) = &claude_client {
         let mut tools = config.workspace_tools(Provider::Claude)?;
+        if let Some(gate) = &gate {
+            tools = gate.tools(tools, workspace.clone(), false)?;
+        }
         for tool in &shared {
             tools = tools.add_shared_tool(Arc::clone(tool)).map_err(text)?;
         }
@@ -215,6 +243,9 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         };
         let client = crate::config::codex_client(&config, codex_model, &host.payments)?;
         let mut tools = config.workspace_tools(Provider::Codex)?;
+        if let Some(gate) = &gate {
+            tools = gate.tools(tools, workspace.clone(), true)?;
+        }
         for tool in &shared {
             tools = tools.add_shared_tool(Arc::clone(tool)).map_err(text)?;
         }
@@ -240,13 +271,6 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     if config.subagents == Some(false) {
         builder = builder.without_subagents();
     }
-    let workspace = config
-        .workspace
-        .clone()
-        .unwrap_or_else(|| host.data_dir.join("workspace"));
-    tokio::fs::create_dir_all(&workspace)
-        .await
-        .map_err(|error| format!("create {}: {error}", workspace.display()))?;
     builder = builder.workspace(workspace.clone());
     builder = if config.hands.is_empty() {
         builder.without_runners()
@@ -305,6 +329,7 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         wake: Notify::new(),
         closed: AtomicBool::new(false),
         subagents,
+        gate,
     });
     if let Some(previous) = host.sessions.insert(Arc::clone(&session)) {
         previous.close().await;
@@ -543,6 +568,15 @@ impl Session {
         if let Some(service_tier) = service_tier {
             agent.set_service_tier(service_tier).await.map_err(text)?;
         }
+        Ok(Value::Null)
+    }
+
+    pub fn set_permission_mode(&self, mode: Mode) -> Result<Value, String> {
+        let gate = self
+            .gate
+            .as_ref()
+            .ok_or("the session was opened without a permission mode")?;
+        gate.set_mode(mode);
         Ok(Value::Null)
     }
 

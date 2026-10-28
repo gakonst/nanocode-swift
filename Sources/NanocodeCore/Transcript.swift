@@ -352,6 +352,12 @@ public final class Transcript {
         held.append(entry)
         continue
       }
+      if let event = nextEvent, kind == nil, !Self.toolEvents.contains(event.type), event.type != "user", event.type != "turn",
+         Self.describe(event, limit: limit) == nil {
+        queue.removeFirst()
+        apply(event)
+        continue
+      }
       let total = stream.text.utf8.count
       if stream.shown < total {
         if revealed { break }

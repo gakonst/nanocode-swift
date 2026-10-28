@@ -14,6 +14,12 @@ public struct LoggedEvent: Sendable, Hashable, Identifiable {
     createdAt = json["created_at"]?.number ?? Date().timeIntervalSince1970 * 1000
     self.event = event
   }
+
+  public var json: JSON {
+    var object: [String: JSON] = ["seq": .number(Double(seq)), "created_at": .number(createdAt), "event": event]
+    if let requestID { object["request_id"] = .string(requestID) }
+    return .object(object)
+  }
 }
 
 
@@ -25,6 +31,13 @@ public struct LiveEvent: Sendable, Hashable {
     self.type = type
     self.fields = fields
   }
+
+  public init?(json: JSON) {
+    guard var object = json.object, let type = object.removeValue(forKey: "type")?.string else { return nil }
+    self.init(type: type, fields: object)
+  }
+
+  public var json: JSON { .object(fields.merging(["type": .string(type)]) { $1 }) }
 
   public subscript(key: String) -> JSON? {
     get { fields[key] }

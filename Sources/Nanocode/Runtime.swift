@@ -12,6 +12,7 @@ public struct NanocodeError: LocalizedError, Sendable, Equatable {
 public enum SessionEvent: Sendable {
   case logged([LoggedEvent])
   case live([LoggedEvent])
+  case events([LiveEvent])
   case driving(Bool)
   case turn(JSON)
   case waiting(requestID: String, retryMs: Double)

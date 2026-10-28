@@ -177,6 +177,8 @@ pub struct Configuration {
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default)]
+    pub observe_edits: bool,
+    #[serde(default)]
     pub fork: Option<Fork>,
 }
 

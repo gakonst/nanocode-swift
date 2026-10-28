@@ -155,6 +155,7 @@ final class Router: @unchecked Sendable {
     var tools: [String: HostTool] = [:]
     var approve: (@Sendable (ApprovalRequest) async -> ApprovalDecision)?
     var subscriptions: (any SubscriptionStore)?
+    var willEdit: (@Sendable (_ sessionID: String, _ paths: [String]) async -> Void)?
     var stopped = false
   }
 
@@ -273,6 +274,14 @@ final class Router: @unchecked Sendable {
           reply = ["id": .number(Double(id)), "error": .string(error.localizedDescription)]
         }
         self?.send(["command": ["reply": reply]])
+      }
+      return
+    }
+    if call["kind"]?.string == "will_edit" {
+      let willEdit = state.withLock { $0.willEdit }
+      Task.detached { [weak self] in
+        await willEdit?(body["session_id"]?.string ?? "", body["paths"]?.array?.compactMap(\.string) ?? [])
+        self?.send(["command": ["reply": ["id": .number(Double(id)), "ok": .null]]])
       }
       return
     }
@@ -409,6 +418,10 @@ public final class NanocodeRuntime: @unchecked Sendable {
 
   public func setSubscriptionStore(_ store: some SubscriptionStore) {
     router.state.withLock { $0.subscriptions = store }
+  }
+
+  public func setEditObserver(_ willEdit: @escaping @Sendable (_ sessionID: String, _ paths: [String]) async -> Void) {
+    router.state.withLock { $0.willEdit = willEdit }
   }
 
   public var events: AsyncStream<RuntimeEvent> { router.subscribe() }

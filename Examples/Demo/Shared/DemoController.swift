@@ -87,7 +87,7 @@ final class DemoController: KitViewController {
   func makeProps() -> CloneProps {
     let model = model
     var props = CloneProps()
-    props.conversations = model.visible.map { CloneConversation(id: $0.id, title: $0.preview ?? "") }
+    props.conversations = model.visible.map { CloneConversation(id: $0.id, title: $0.title) }
     props.current = model.selection
     props.canCreate = !model.opening
     props.canSelect = !model.opening
@@ -108,11 +108,17 @@ final class DemoController: KitViewController {
     props.prompts = AppModel.prompts
     let kit = model.style == .chatgpt ? "ChatGPT-style demo" : "Claude-style demo"
     #if os(macOS)
-    props.footer = "[\u{F8FF} on Mac](https://nanocode.xyz) · \(kit) · native agent in AppKit · built with [nanocode-swift](https://github.com/gakonst/nanocode-swift)"
+    let (device, toolkit) = ("Mac", "AppKit")
     props.titlebarInset = 72
     #else
-    props.footer = "[\u{F8FF} on iPhone](https://nanocode.xyz) · \(kit) · native agent in UIKit · built with [nanocode-swift](https://github.com/gakonst/nanocode-swift)"
+    let (device, toolkit) = ("iPhone", "UIKit")
     #endif
+    let agent = switch model.runner {
+    case .device: "native agent in \(toolkit)"
+    case .cloudflare: "\(toolkit) app, durable agent in a [Cloudflare Durable Object](https://nanocode.xyz/cloudflare)"
+    case .vercel: "\(toolkit) app, durable agent in [Vercel Functions](https://nanocode.xyz/vercel)"
+    }
+    props.footer = "[\u{F8FF} on \(device)](https://nanocode.xyz) · \(kit) · \(agent) · built with [nanocode-swift](https://github.com/gakonst/nanocode-swift)"
     if pill == nil || shownStyle != model.style {
       pill = ClonePill(skin: skin, title: "") { [weak self] in self?.openSettings() }
       pill?.shrink = true
@@ -123,6 +129,11 @@ final class DemoController: KitViewController {
   }
 
   var walletLabel: String {
+    switch model.runner {
+    case .cloudflare: return model.cloudHand.state.online && model.deviceHand ? "Cloudflare · this device as hand" : "Cloudflare"
+    case .vercel: return "Vercel"
+    case .device: break
+    }
     if model.access == .keys { return "API keys" }
     if let account = model.wallet.status?.account { return account.count > 12 ? "\(account.prefix(6))…\(account.suffix(4))" : account }
     return model.wallet.connecting ? "Connecting…" : "Connect Tempo Wallet"

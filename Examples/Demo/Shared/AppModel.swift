@@ -1,6 +1,9 @@
 import Foundation
 import NanocodeKit
 import Observation
+#if os(iOS)
+import UIKit
+#endif
 
 enum Style: String, CaseIterable, Identifiable {
   case chatgpt
@@ -18,6 +21,49 @@ enum Style: String, CaseIterable, Identifiable {
     "claude-haiku-5-5": "Fastest for quick answers",
     "claude-sonnet-5-5": "Smart, efficient model for everyday use",
   ]
+}
+
+enum Runner: String, CaseIterable, Identifiable {
+  case device
+  case cloudflare
+  case vercel
+  var id: String { rawValue }
+  var label: String {
+    switch self {
+    case .device: "This device"
+    case .cloudflare: "Cloudflare"
+    case .vercel: "Vercel"
+    }
+  }
+  var kind: RemoteKind? {
+    switch self {
+    case .device: nil
+    case .cloudflare: .cloudflare
+    case .vercel: .vercel
+    }
+  }
+
+  static let models: [RemoteKind: [Provider: [String]]] = [
+    .cloudflare: [.claude: ["claude-haiku-5-5", "claude-sonnet-5-5"], .codex: ["gpt-6-luna", "gpt-6.1-sol", "glm-5.3"]],
+    .vercel: [.claude: ["claude-haiku-5-5", "claude-sonnet-5-5", "zai/glm-5.3", "moonshotai/kimi-k3"],
+              .codex: ["gpt-6-luna", "gpt-6.1-sol", "glm-5.3", "kimi-k3"]],
+  ]
+
+  static let names: [String: String] = ["zai/glm-5.3": "GLM-5.3", "moonshotai/kimi-k3": "Kimi K3", "glm-5.3": "GLM-5.3", "kimi-k3": "Kimi K3"]
+}
+
+struct Conversation: Identifiable, Hashable {
+  let id: String
+  let title: String
+  let model: String
+  let provider: Provider
+  let updatedAt: Date
+  let remote: RemoteConversation?
+}
+
+struct ModelOption: Identifiable, Hashable {
+  let id: String
+  let name: String
 }
 
 enum Access: String, CaseIterable, Identifiable {
@@ -56,7 +102,18 @@ final class AppModel {
   let hand: HandMonitor
   var catalog: ModelCatalog?
   var conversations: [SessionSummary] = []
+  var remotes: [RemoteConversation] = []
   var selection: String?
+  var runner: Runner = .device
+  var deviceHand = UserDefaults.standard.object(forKey: "deviceHand") as? Bool ?? true
+  var cloudflareURL = UserDefaults.standard.string(forKey: "cloudflareURL") ?? "https://nanocode.xyz/cloudflare/"
+  var vercelURL = UserDefaults.standard.string(forKey: "vercelURL") ?? "https://nanocode.xyz/vercel/api/chat"
+  var cloudflareToken = AppModel.secret("cloudflare")
+  var vercelToken = AppModel.secret("vercel")
+  let remoteStore: RemoteStore
+  let cloudHand: HandMonitor
+  @ObservationIgnored private var sessions: [String: RemoteSession] = [:]
+  @ObservationIgnored private var handFor: String?
   var chat = Chat()
   var style: Style = .chatgpt
   var provider: Provider = .codex
@@ -81,6 +138,13 @@ final class AppModel {
     }
     wallet = WalletMonitor(runtime: runtime, name: "nanocode for \(AppModel.platform)", website: "https://nanocode.xyz")
     hand = HandMonitor(runtime: runtime)
+    cloudHand = HandMonitor(runtime: runtime, id: "cloud")
+    do {
+      remoteStore = try RemoteStore(directory: runtime.dataDirectory.appendingPathComponent("remote", isDirectory: true))
+    } catch {
+      fatalError("the remote conversation store did not open: \(error)")
+    }
+    if let saved = UserDefaults.standard.string(forKey: "NanocodeRunner").flatMap(Runner.init(rawValue:)) { runner = saved }
     if let token = UserDefaults.standard.string(forKey: "relayToken") {
       relay = HandRelay(token: token)
     } else {
@@ -93,11 +157,55 @@ final class AppModel {
     model = style.model
   }
 
-  var visible: [SessionSummary] {
-    conversations.filter { Provider(rawValue: $0.family) == style.provider }
+  var visible: [Conversation] {
+    if let kind = runner.kind {
+      return remotes.filter { $0.kind == kind && $0.provider == style.provider && $0.title != nil }.map {
+        Conversation(id: $0.id, title: $0.title ?? "", model: $0.model, provider: $0.provider, updatedAt: $0.updatedAt, remote: $0)
+      }
+    }
+    return conversations.filter { Provider(rawValue: $0.family) == style.provider }.map {
+      Conversation(id: $0.id, title: $0.preview ?? "", model: $0.model, provider: Provider(rawValue: $0.family) ?? .claude,
+                   updatedAt: $0.updatedAt, remote: nil)
+    }
   }
 
-  var models: [ModelEntry] { catalog?.models[style.provider] ?? [] }
+  var models: [ModelOption] {
+    guard let kind = runner.kind else { return (catalog?.models[style.provider] ?? []).map { ModelOption(id: $0.id, name: $0.name) } }
+    return (Runner.models[kind]?[style.provider] ?? []).map { ModelOption(id: $0, name: catalog?.model($0)?.name ?? Runner.names[$0] ?? $0) }
+  }
+
+  var server: RemoteServer? {
+    switch runner {
+    case .device: nil
+    case .cloudflare: RemoteServer.cloudflare(URL(string: cloudflareURL) ?? URL(string: "https://nanocode.xyz/cloudflare/")!, token: cloudflareToken)
+    case .vercel: RemoteServer.vercel(URL(string: vercelURL) ?? URL(string: "https://nanocode.xyz/vercel/api/chat")!, token: vercelToken)
+    }
+  }
+
+  func effort(_ model: String) -> String? {
+    guard let entry = catalog?.model(model) else { return runner == .device ? nil : "low" }
+    return entry.efforts.contains("low") ? "low" : entry.effort
+  }
+
+  func setRunner(_ runner: Runner) async {
+    guard runner != self.runner else { return }
+    self.runner = runner
+    UserDefaults.standard.set(runner.rawValue, forKey: "NanocodeRunner")
+    model = models.contains { $0.id == model } ? model : models.first { $0.id == style.model }?.id ?? models.first?.id ?? style.model
+    thinking = effort(model) ?? thinking
+    await refresh()
+    if let first = visible.first { await open(first) } else { await newChat() }
+  }
+
+  func saveServers() {
+    UserDefaults.standard.set(cloudflareURL, forKey: "cloudflareURL")
+    UserDefaults.standard.set(vercelURL, forKey: "vercelURL")
+    UserDefaults.standard.set(deviceHand, forKey: "deviceHand")
+    for (name, value) in [("cloudflare", cloudflareToken), ("vercel", vercelToken)] {
+      if value.isEmpty { Keychain.remove(service: "xyz.nanocode.demo.keys", account: name) }
+      else { try? Keychain.save(Data(value.utf8), service: "xyz.nanocode.demo.keys", account: name) }
+    }
+  }
 
   var bound: Bool { !chat.entries.isEmpty }
 
@@ -107,13 +215,13 @@ final class AppModel {
     UserDefaults.standard.set(style.rawValue, forKey: "NanocodeStyle")
     provider = style.provider
     model = models.contains { $0.id == style.model } ? style.model : models.first?.id ?? style.model
-    thinking = catalog?.model(model)?.effort ?? thinking
+    thinking = effort(model) ?? catalog?.model(model)?.effort ?? thinking
     if let first = visible.first { await open(first) } else { await newChat() }
   }
 
   func choose(_ id: String) async {
     model = id
-    thinking = catalog?.model(id)?.effort ?? thinking
+    thinking = effort(id) ?? catalog?.model(id)?.effort ?? thinking
     await newChat()
   }
 
@@ -142,7 +250,7 @@ final class AppModel {
       self.model = model
       style = provider == .claude ? .claude : .chatgpt
     }
-    thinking = catalog?.model(model)?.effort ?? thinking
+    thinking = (runner == .device ? catalog?.model(model)?.effort : effort(model)) ?? thinking
     await refresh()
     machines = await relay.hands()
     watch()
@@ -178,6 +286,7 @@ final class AppModel {
 
   func refresh() async {
     conversations = (try? await runtime.sessions())?.filter { $0.preview != nil || $0.id == selection } ?? []
+    remotes = remoteStore.conversations()
   }
 
   func authentication(for provider: Provider) -> Authentication {
@@ -202,12 +311,77 @@ final class AppModel {
   }
 
   func newChat() async {
+    if let server {
+      let session = RemoteSession.create(server: server, store: remoteStore, provider: style.provider, model: model, thinking: effort(model))
+      await open(remote: session)
+      return
+    }
     await open(id: Identifier.uuidv7(), provider: provider, model: model, thinking: thinking)
   }
 
-  func open(_ summary: SessionSummary) async {
-    let family = Provider(rawValue: summary.family) ?? .claude
-    await open(id: summary.id, provider: family, model: summary.model, thinking: nil)
+  func open(_ conversation: Conversation) async {
+    if let record = conversation.remote, let server {
+      await open(remote: sessions[record.id] ?? RemoteSession(server: server, store: remoteStore, conversation: record))
+      return
+    }
+    await open(id: conversation.id, provider: conversation.provider, model: conversation.model, thinking: nil)
+  }
+
+  func open(remote session: RemoteSession) async {
+    error = nil
+    sessions[session.id] = session
+    let chat = Chat()
+    self.chat = chat
+    selection = session.id
+    model = session.record.model
+    await chat.attach(session)
+    await refresh()
+    await attachHand(session)
+  }
+
+  static var handName: String {
+    #if os(macOS)
+    let name = Host.current().localizedName ?? "mac"
+    #else
+    let name = UIDevice.current.name
+    #endif
+    let slug = String(name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }).split(separator: "-").joined(separator: "-")
+    return slug.isEmpty ? "device" : String(slug.prefix(40))
+  }
+
+  func attachHand(_ session: RemoteSession) async {
+    guard session.server.kind == .cloudflare, deviceHand else {
+      session.hand = nil
+      if handFor != nil {
+        handFor = nil
+        await cloudHand.stop()
+      }
+      return
+    }
+    if handFor == session.id, cloudHand.state.online {
+      session.hand = Self.handName
+      return
+    }
+    do {
+      let access = try await session.handAccess(name: Self.handName)
+      await cloudHand.stop()
+      handFor = session.id
+      await cloudHand.start(HandConfiguration(url: access.url.absoluteString, token: access.token, name: Self.handName,
+                                              workspace: workspace, tools: DemoTools.all))
+      for _ in 0..<40 where !cloudHand.state.online {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+      }
+      session.hand = cloudHand.state.online ? Self.handName : nil
+    } catch {
+      session.hand = nil
+      cloudHand.error = error.localizedDescription
+    }
+  }
+
+  func setDeviceHand(_ on: Bool) async {
+    deviceHand = on
+    saveServers()
+    if let session = chat.backend as? RemoteSession { await attachHand(session) }
   }
 
   func open(id: String, provider: Provider, model: String, thinking: String?) async {
@@ -227,10 +401,17 @@ final class AppModel {
     }
   }
 
-  func delete(_ summary: SessionSummary) async {
-    try? await runtime.command("close", ["session": .string(summary.id)])
-    conversations.removeAll { $0.id == summary.id }
-    if summary.id == selection { await newChat() }
+  func delete(_ conversation: Conversation) async {
+    if conversation.remote != nil {
+      (sessions.removeValue(forKey: conversation.id) ?? conversation.remote.flatMap { record in
+        server.map { RemoteSession(server: $0, store: remoteStore, conversation: record) }
+      })?.delete()
+      remotes.removeAll { $0.id == conversation.id }
+    } else {
+      try? await runtime.command("close", ["session": .string(conversation.id)])
+      conversations.removeAll { $0.id == conversation.id }
+    }
+    if conversation.id == selection { await newChat() }
   }
 
   func setThinking(_ thinking: String) async {

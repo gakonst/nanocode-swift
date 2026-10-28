@@ -162,6 +162,8 @@ final class SettingsController: KitViewController {
   let computer: StackView
   let hand: StackView
   var keys: KitView?
+  var servers: KitView?
+  let cloud: StackView
   var handCommand = ""
   var handName: String = {
     #if os(macOS)
@@ -176,6 +178,7 @@ final class SettingsController: KitViewController {
     wallet = form.stack()
     computer = form.stack()
     hand = form.stack()
+    cloud = form.stack()
     super.init(nibName: nil, bundle: nil)
     title = "Settings"
   }
@@ -194,7 +197,32 @@ final class SettingsController: KitViewController {
     ])
     keys.isHidden = model.access != .keys
     self.keys = keys
+    let servers = form.stack([
+      form.label("Cloudflare deployment", secondary: true),
+      form.field("https://nanocode.xyz/cloudflare/", value: model.cloudflareURL, mono: true) { [weak self] in self?.model.cloudflareURL = $0; self?.model.saveServers() },
+      form.field("Access token (optional)", value: model.cloudflareToken, secure: true) { [weak self] in self?.model.cloudflareToken = $0; self?.model.saveServers() },
+      form.label("Vercel deployment", secondary: true),
+      form.field("https://nanocode.xyz/vercel/api/chat", value: model.vercelURL, mono: true) { [weak self] in self?.model.vercelURL = $0; self?.model.saveServers() },
+      form.field("Access token (optional)", value: model.vercelToken, secure: true) { [weak self] in self?.model.vercelToken = $0; self?.model.saveServers() },
+      form.toggle("Run the Cloudflare agent's tools and cells on this device", isOn: model.deviceHand) { [weak self] on in
+        guard let self else { return }
+        Task { await self.model.setDeviceHand(on) }
+      },
+      cloud,
+    ])
+    servers.isHidden = model.runner == .device
+    self.servers = servers
     let content = form.stack([
+      section("Where the agent runs", [
+        form.label("On this device the agent and its durable journal live in the app. On Cloudflare or Vercel it runs in the demo's durable session, keeps going while this device sleeps, and the app catches up from where it left off.", secondary: true),
+        form.segmented(Runner.allCases.map(\.label), selected: Runner.allCases.firstIndex(of: model.runner) ?? 0) { [weak self] index in
+          guard let self else { return }
+          let runner = Runner.allCases[index]
+          self.servers?.isHidden = runner == .device
+          Task { await self.model.setRunner(runner) }
+        },
+        servers,
+      ]),
       section("Appearance", [
         form.segmented(Style.allCases.map(\.label), selected: Style.allCases.firstIndex(of: model.style) ?? 0) { [weak self] index in
           guard let self else { return }
@@ -258,6 +286,12 @@ final class SettingsController: KitViewController {
   }
 
   func refresh() {
+    form.clear(cloud)
+    if model.runner == .cloudflare, model.deviceHand {
+      let state = model.cloudHand.state
+      cloud.addArrangedSubview(form.label("Hand \(AppModel.handName): \(state.label)", size: 12, secondary: true))
+      if let error = model.cloudHand.error { cloud.addArrangedSubview(form.label(error, danger: true)) }
+    }
     let monitor = model.wallet
     form.clear(wallet)
     if let account = monitor.status?.account {

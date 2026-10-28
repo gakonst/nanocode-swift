@@ -21,11 +21,26 @@ The [nanocode](https://nanocode.xyz) agent SDK on Apple platforms: Claude and Co
   </tr>
 </table>
 
+## Durability, on the device or in the cloud
+
+The demo app runs the same agent in one of three places (Settings, or View ▸ Run on… on the Mac):
+
+- **This device.** The Rust SDK runs inside the app and journals every turn in a local SQLite file. A turn the app was killed in the middle of resumes from its checkpoint the next time the app opens; on iOS the app also asks for background time while a turn runs.
+- **Cloudflare.** The agent runs in the [Cloudflare demo](https://nanocode.xyz/cloudflare)'s Durable Object. The app is a native client of it, so the turn keeps going while the phone sleeps or the app is closed, and the app catches up from its event cursor when it comes back. The app can also attach this device as the cloud agent's hand, so the agent's Code Mode cells and device tools (`device_info`, `open_url`, `clipboard`, `speak`) run on the phone or Mac.
+- **Vercel.** The same, with the agent in the [Vercel demo](https://nanocode.xyz/vercel)'s Workflow.
+
+```swift
+let store = try RemoteStore(directory: dataDirectory.appendingPathComponent("remote"))
+let session = RemoteSession.create(server: .cloudflare(), store: store, provider: .claude, model: "claude-haiku-5-5", thinking: "low")
+await chat.attach(session)
+await chat.send("What device am I on?")
+```
+
 ## Products
 
 | Product | What it is |
 | --- | --- |
-| `Nanocode` | The runtime over the Rust library: `NanocodeRuntime`, `Session`, `Chat`, `Wallet` and `WalletMonitor`, hands, runners and the model catalog. |
+| `Nanocode` | The runtime over the Rust library: `NanocodeRuntime`, `Session`, `Chat`, `Wallet` and `WalletMonitor`, hands, runners and the model catalog, and `RemoteSession` for agents that run on a Cloudflare or Vercel deployment. |
 | `NanocodeKit` | Native AppKit (macOS) and UIKit (iOS) UI from one source: `CloneViewController` with the ChatGPT and Claude skins of nanocode-ts's clone apps, and `NanocodeChatViewController` for a conversation in your own window. |
 | `NanocodeCore` | Plain Swift, no Rust: events, the paced `Transcript`, tool cells, turns, the markdown parser and syntax highlighter, for apps that render nanocode events they receive some other way. |
 | `NanocodeViews` | SwiftUI views over `NanocodeCore`, for SwiftUI hosts. |
@@ -51,7 +66,7 @@ With no API key configured, sessions pay through the connected Tempo Wallet (`Wa
 
 - `Examples/Demo` is the nanocode.xyz demo: an AppKit app for macOS and a UIKit app for iOS, in the ChatGPT or Claude style, with conversations from the store, the model menu, a Tempo Wallet, device tools (`device_info`, `open_url`, `clipboard`, `speak`), a computer attached through the relay and this device as a hand. Run `xcodegen generate` in it and open `NanocodeDemo.xcodeproj`.
 - `Examples/Demo/AppKit` and `Examples/Demo/UIKit` are the smallest hosts: an `NSWindow` and a `UINavigationController` around `NanocodeChatViewController`.
-- `Examples/Console` is a terminal client, and `Console hand <url> <token>` makes the process a hand.
+- `Examples/Console` is a terminal client: `Console remote cloudflare|vercel [prompts…]` chats with a deployment and reopens the conversation from its journal, `Console remote-resume [id]` follows a turn a killed process left running, and `Console hand <url> <token>` makes the process a hand.
 
 ## Building the library
 

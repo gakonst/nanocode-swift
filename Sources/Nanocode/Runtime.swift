@@ -154,6 +154,7 @@ final class Router: @unchecked Sendable {
     var listeners: [UUID: AsyncStream<RuntimeEvent>.Continuation] = [:]
     var tools: [String: HostTool] = [:]
     var approve: (@Sendable (ApprovalRequest) async -> ApprovalDecision)?
+    var subscriptions: (any SubscriptionStore)?
     var stopped = false
   }
 
@@ -256,6 +257,22 @@ final class Router: @unchecked Sendable {
       Task.detached { [weak self] in
         let decision = await approve(ApprovalRequest(body))
         self?.send(["command": ["reply": ["id": .number(Double(id)), "ok": decision.json]]])
+      }
+      return
+    }
+    if call["kind"]?.string == "subscription_store" {
+      guard let store = state.withLock({ $0.subscriptions }) else {
+        send(["command": ["reply": ["id": .number(Double(id)), "error": "this app keeps no plan sign-ins"]]])
+        return
+      }
+      Task.detached { [weak self] in
+        let reply: JSON
+        do {
+          reply = ["id": .number(Double(id)), "ok": try await SubscriptionCalls.answer(body, store: store)]
+        } catch {
+          reply = ["id": .number(Double(id)), "error": .string(error.localizedDescription)]
+        }
+        self?.send(["command": ["reply": reply]])
       }
       return
     }
@@ -388,6 +405,10 @@ public final class NanocodeRuntime: @unchecked Sendable {
 
   public func setApprovalHandler(_ approve: @escaping @Sendable (ApprovalRequest) async -> ApprovalDecision) {
     router.state.withLock { $0.approve = approve }
+  }
+
+  public func setSubscriptionStore(_ store: some SubscriptionStore) {
+    router.state.withLock { $0.subscriptions = store }
   }
 
   public var events: AsyncStream<RuntimeEvent> { router.subscribe() }

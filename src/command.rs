@@ -111,6 +111,20 @@ pub enum Command {
     McpSignInWait {
         server: String,
     },
+    PlanSignIn {
+        provider: crate::config::Provider,
+        #[serde(default)]
+        redirect_uri: Option<String>,
+    },
+    PlanSignInComplete {
+        code: String,
+    },
+    PlanStatus {
+        provider: crate::config::Provider,
+    },
+    PlanSignOut {
+        provider: crate::config::Provider,
+    },
     HandStart(Box<hand::Start>),
     HandStop {
         id: String,
@@ -245,6 +259,13 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
         }
         Command::McpSignIn(server) => mcp::sign_in(host, server).await,
         Command::McpSignInWait { server } => mcp::finish(host, &server).await,
+        Command::PlanSignIn {
+            provider,
+            redirect_uri,
+        } => crate::plans::sign_in(host, provider, redirect_uri).await,
+        Command::PlanSignInComplete { code } => crate::plans::complete(host, &code).await,
+        Command::PlanStatus { provider } => crate::plans::status(host, provider).await,
+        Command::PlanSignOut { provider } => crate::plans::sign_out(host, provider).await,
         Command::HandStart(start) => hand::start(host, *start).await,
         Command::HandStop { id } => Ok(hand::stop(host, &id)),
         Command::HandStatus {} => Ok(hand::status(host)),

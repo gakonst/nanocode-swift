@@ -203,7 +203,7 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
     }));
     let mut builder = Nanocode::builder();
     let claude_client = match config.provider {
-        Provider::Claude => Some(crate::config::claude_client(&config, &host.payments)?),
+        Provider::Claude => Some(crate::config::claude_client(host, &config, &host.payments)?),
         Provider::Codex => None,
     };
     if let Some(client) = &claude_client {
@@ -246,7 +246,8 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         let Some(codex_model) = model.as_codex() else {
             return Err(format!("{model} is not a Codex model"));
         };
-        let client = crate::config::codex_client(&config, codex_model, &host.payments)?;
+        let client =
+            crate::config::codex_client(host, &config, codex_model, &host.payments).await?;
         let mut tools = config.workspace_tools(Provider::Codex)?;
         if let Some(gate) = &gate {
             tools = gate.tools(tools, workspace.clone(), true)?;

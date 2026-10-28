@@ -38,6 +38,7 @@ impl Provider {
 pub enum Auth {
     ApiKey(String),
     Headers(BTreeMap<String, String>),
+    Plan,
     #[default]
     Tempo,
 }
@@ -289,6 +290,7 @@ impl Configuration {
 }
 
 pub fn claude_client(
+    host: &Arc<crate::bridge::Host>,
     config: &Configuration,
     payments: &crate::payments::Payments,
 ) -> Result<ClaudeClient, String> {
@@ -306,6 +308,15 @@ pub fn claude_client(
             messages_url(base.unwrap_or(ANTHROPIC_API)),
             header_map(headers)?,
         ),
+        Auth::Plan => ClaudeClient::with_auth_provider(
+            Default::default(),
+            base.map_or_else(
+                || nanocode::claude::ANTHROPIC_SUBSCRIPTION_MESSAGES_URL.to_owned(),
+                messages_url,
+            ),
+            crate::plans::claude_provider(host)?,
+        )
+        .subscription_compatibility(),
         Auth::Tempo => {
             let url = base.map_or_else(|| Service::Anthropic.url().to_owned(), messages_url);
             ClaudeClient::with_auth_headers(Default::default(), url.clone(), Default::default())
@@ -314,7 +325,8 @@ pub fn claude_client(
     })
 }
 
-pub fn codex_client(
+pub async fn codex_client(
+    host: &Arc<crate::bridge::Host>,
     config: &Configuration,
     model: Model,
     payments: &crate::payments::Payments,
@@ -326,6 +338,15 @@ pub fn codex_client(
                 .map_err(|error| error.to_string())?;
             match config.endpoint.as_deref() {
                 Some(base) => builder.api_base_url(base),
+                None => builder,
+            }
+        }
+        Auth::Plan => {
+            let builder = OpenAi::builder(crate::plans::chatgpt_auth(host).await?);
+            match config.endpoint.as_deref() {
+                Some(base) => builder
+                    .api_base_url(base)
+                    .transport(ResponsesTransport::Https),
                 None => builder,
             }
         }
@@ -364,6 +385,7 @@ pub fn codex_web_search(
             _ => OPENAI_API.to_owned(),
         });
     let transport: Arc<dyn nanocode::codex::transport::host::HostTransport> = match &config.auth {
+        Auth::Plan => return Ok(None),
         Auth::Tempo => Arc::new(crate::payments::Transport::new(
             payments.layer(Service::OpenAi, &base)?,
         )),

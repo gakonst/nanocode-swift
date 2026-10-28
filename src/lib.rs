@@ -9,6 +9,7 @@ mod files;
 mod hand;
 mod mcp;
 mod payments;
+mod plans;
 mod runner;
 mod sandbox;
 mod session;

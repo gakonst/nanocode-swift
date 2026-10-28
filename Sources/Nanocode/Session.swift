@@ -25,12 +25,14 @@ public enum Authentication: Sendable, Hashable {
   case tempo
   case apiKey(String)
   case headers([String: String])
+  case plan
 
   var json: JSON {
     switch self {
     case .tempo: "tempo"
     case .apiKey(let key): ["api_key": .string(key)]
     case .headers(let headers): ["headers": .object(headers.mapValues(JSON.string))]
+    case .plan: "plan"
     }
   }
 }

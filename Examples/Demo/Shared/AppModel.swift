@@ -1,6 +1,24 @@
 import Foundation
-import NanocodeUI
+import NanocodeKit
 import Observation
+
+enum Style: String, CaseIterable, Identifiable {
+  case chatgpt
+  case claude
+  var id: String { rawValue }
+  var label: String { self == .chatgpt ? "ChatGPT" : "Claude" }
+  var provider: Provider { self == .chatgpt ? .codex : .claude }
+  var model: String { self == .chatgpt ? "gpt-6-luna" : "claude-haiku-5-5" }
+
+  static let about: [String: String] = [
+    "glm-5.3": "Open-weight model from Z.ai",
+    "gpt-6-luna": "Fast for everyday questions",
+    "gpt-6.1-sol": "Thinks longer for harder problems",
+    "kimi-k3": "Open-weight model from Moonshot AI",
+    "claude-haiku-5-5": "Fastest for quick answers",
+    "claude-sonnet-5-5": "Smart, efficient model for everyday use",
+  ]
+}
 
 enum Access: String, CaseIterable, Identifiable {
   case tempo
@@ -18,6 +36,13 @@ final class AppModel {
     Keep answers short and show your work with tools when it helps.
     """
 
+  static let prompts = [
+    "What device am I on? Use your tools.",
+    "Write a JavaScript function that returns the first 20 primes, run it, and show the result.",
+    "Read me a haiku about agents running on phones.",
+    "Search the web for today's top tech story and summarize it in two sentences.",
+  ]
+
   static var platform: String {
     #if os(macOS)
     "Mac"
@@ -33,6 +58,7 @@ final class AppModel {
   var conversations: [SessionSummary] = []
   var selection: String?
   var chat = Chat()
+  var style: Style = .chatgpt
   var provider: Provider = .codex
   var model = "gpt-6-luna"
   var thinking = "low"
@@ -61,6 +87,33 @@ final class AppModel {
       UserDefaults.standard.set(relay.token, forKey: "relayToken")
     }
     if let saved = UserDefaults.standard.string(forKey: "access").flatMap(Access.init(rawValue:)) { access = saved }
+    if let saved = UserDefaults.standard.string(forKey: "NanocodeStyle").flatMap(Style.init(rawValue:)) { style = saved }
+    provider = style.provider
+    model = style.model
+  }
+
+  var visible: [SessionSummary] {
+    conversations.filter { Provider(rawValue: $0.family) == style.provider }
+  }
+
+  var models: [ModelEntry] { catalog?.models[style.provider] ?? [] }
+
+  var bound: Bool { !chat.entries.isEmpty }
+
+  func setStyle(_ style: Style) async {
+    guard style != self.style else { return }
+    self.style = style
+    UserDefaults.standard.set(style.rawValue, forKey: "NanocodeStyle")
+    provider = style.provider
+    model = models.contains { $0.id == style.model } ? style.model : models.first?.id ?? style.model
+    thinking = catalog?.model(model)?.effort ?? thinking
+    if let first = visible.first { await open(first) } else { await newChat() }
+  }
+
+  func choose(_ id: String) async {
+    model = id
+    thinking = catalog?.model(id)?.effort ?? thinking
+    await newChat()
   }
 
   var workspace: URL { runtime.dataDirectory.appendingPathComponent("workspace", isDirectory: true) }
@@ -86,15 +139,16 @@ final class AppModel {
        let model = UserDefaults.standard.string(forKey: "NanocodeModel") {
       self.provider = provider
       self.model = model
-      thinking = catalog?.model(model)?.effort ?? thinking
+      style = provider == .claude ? .claude : .chatgpt
     }
+    thinking = catalog?.model(model)?.effort ?? thinking
     await refresh()
     machines = await relay.hands()
     watch()
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
       await chat.send(prompt)
-    } else if let first = conversations.first {
+    } else if !UserDefaults.standard.bool(forKey: "NanocodeNew"), let first = visible.first {
       await open(first)
     } else {
       await newChat()
@@ -175,6 +229,7 @@ final class AppModel {
   func delete(_ summary: SessionSummary) async {
     try? await runtime.command("close", ["session": .string(summary.id)])
     conversations.removeAll { $0.id == summary.id }
+    if summary.id == selection { await newChat() }
   }
 
   func setThinking(_ thinking: String) async {

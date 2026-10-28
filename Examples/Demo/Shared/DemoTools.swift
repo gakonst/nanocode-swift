@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-import NanocodeUI
+import NanocodeKit
 #if os(macOS)
 import AppKit
 #else

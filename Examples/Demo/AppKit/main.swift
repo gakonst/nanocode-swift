@@ -1,6 +1,5 @@
 import AppKit
-import NanocodeUI
-import SwiftUI
+import NanocodeKit
 
 @MainActor
 final class Delegate: NSObject, NSApplicationDelegate {
@@ -10,7 +9,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
   let chat = Chat()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    let controller = NanocodeChatViewController(chat: chat, theme: .nanocode, placeholder: "Ask nanocode anything")
+    let controller = NanocodeChatViewController(chat: chat, skin: .claude)
     let window = NSWindow(contentViewController: controller)
     window.title = "nanocode"
     window.setContentSize(NSSize(width: 860, height: 680))

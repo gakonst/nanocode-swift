@@ -25,7 +25,7 @@ targets:
       - macOS
     dependencies:
       - package: Nanocode
-        product: NanocodeUI
+        product: NanocodeKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
@@ -44,7 +44,7 @@ targets:
       - iOS
     dependencies:
       - package: Nanocode
-        product: NanocodeUI
+        product: NanocodeKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
@@ -52,7 +52,6 @@ targets:
         PRODUCT_MODULE_NAME: NanocodeDemo
         INFOPLIST_KEY_CFBundleDisplayName: Nanocode
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Attach photos to a message.
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -63,7 +62,7 @@ targets:
       - UIKit
     dependencies:
       - package: Nanocode
-        product: NanocodeUI
+        product: NanocodeKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo.uikit
@@ -78,7 +77,7 @@ targets:
       - AppKit
     dependencies:
       - package: Nanocode
-        product: NanocodeUI
+        product: NanocodeKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo.appkit

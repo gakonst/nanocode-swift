@@ -1,5 +1,4 @@
-import NanocodeUI
-import SwiftUI
+import NanocodeKit
 import UIKit
 
 @main
@@ -10,7 +9,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
   let chat = Chat()
 
   func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-    let controller = NanocodeChatViewController(chat: chat, theme: .nanocode, placeholder: "Ask nanocode anything")
+    let controller = NanocodeChatViewController(chat: chat, skin: .chatgpt)
     controller.title = "nanocode"
     controller.navigationItem.rightBarButtonItem = UIBarButtonItem(
       image: UIImage(systemName: "creditcard"), style: .plain, target: self, action: #selector(showWallet))
@@ -40,8 +39,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
   @objc func showWallet() {
     guard let wallet else { return }
-    let sheet = UIHostingController(rootView: WalletView(monitor: wallet).padding().nanocodeTheme(.nanocode))
-    sheet.sheetPresentationController?.detents = [.medium()]
-    window?.rootViewController?.present(sheet, animated: true)
+    let status = wallet.status
+    let message = status?.account.map { "\($0)\nSpent \(status?.total ?? "0") MACH" } ?? "No wallet is connected."
+    let alert = UIAlertController(title: "Tempo Wallet", message: message, preferredStyle: .alert)
+    if status?.account == nil {
+      alert.addAction(UIAlertAction(title: "Connect", style: .default) { _ in Task { await wallet.connect() } })
+    }
+    alert.addAction(UIAlertAction(title: "OK", style: .cancel))
+    window?.rootViewController?.present(alert, animated: true)
   }
 }

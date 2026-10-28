@@ -115,6 +115,7 @@ final class DemoController: KitViewController {
     #endif
     if pill == nil || shownStyle != model.style {
       pill = ClonePill(skin: skin, title: "") { [weak self] in self?.openSettings() }
+      pill?.shrink = true
     }
     pill?.title = walletLabel
     props.actions = pill.map { [$0] } ?? []

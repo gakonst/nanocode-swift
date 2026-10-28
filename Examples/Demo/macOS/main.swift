@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           backing: .buffered, defer: false)
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
+    window.toolbar = NSToolbar(identifier: "Nanocode")
+    window.toolbarStyle = .unified
+    window.titlebarSeparatorStyle = .none
     window.title = "Nanocode"
     window.contentViewController = controller
     window.setContentSize(NSSize(width: 1100, height: 760))

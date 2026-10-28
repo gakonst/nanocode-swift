@@ -26,6 +26,7 @@ use nanocode::{
 use nanocode_code_mode::embedded::HostFuture;
 use nanocode_store_sqlite::SqliteSql;
 use nanocode_sync::Atom;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::Notify;
 
@@ -492,11 +493,12 @@ impl Session {
         request_id: String,
         prompt: String,
         images: Vec<String>,
+        files: Vec<PromptFile>,
         metadata: Value,
     ) -> Result<Value, String> {
         let submission = Submission {
             request_id,
-            prompt: prompt_of(prompt, images),
+            prompt: prompt_of(prompt, images, files),
             hand: None,
             metadata: serde_json::value::to_raw_value(&metadata).map_err(text)?,
         };
@@ -520,11 +522,12 @@ impl Session {
         request_id: &str,
         prompt: String,
         images: Vec<String>,
+        files: Vec<PromptFile>,
         into: Option<&str>,
     ) -> Result<Value, String> {
         let steered = self
             .inbox
-            .steer(into, request_id, prompt_of(prompt, images))
+            .steer(into, request_id, prompt_of(prompt, images, files))
             .await
             .map_err(text)?;
         Ok(Value::Bool(steered))
@@ -696,16 +699,28 @@ impl Session {
     }
 }
 
-fn prompt_of(prompt: String, images: Vec<String>) -> Prompt {
-    if images.is_empty() {
+#[derive(Deserialize)]
+pub struct PromptFile {
+    file_data: String,
+    #[serde(default)]
+    filename: Option<String>,
+}
+
+fn prompt_of(prompt: String, images: Vec<String>, files: Vec<PromptFile>) -> Prompt {
+    if images.is_empty() && files.is_empty() {
         Prompt::from(prompt)
     } else {
-        Prompt::content(std::iter::once(UserInput::Text { text: prompt }).chain(
-            images.into_iter().map(|image_url| UserInput::Image {
-                image_url,
-                detail: None,
-            }),
-        ))
+        Prompt::content(
+            std::iter::once(UserInput::Text { text: prompt })
+                .chain(images.into_iter().map(|image_url| UserInput::Image {
+                    image_url,
+                    detail: None,
+                }))
+                .chain(files.into_iter().map(|file| UserInput::File {
+                    file_data: file.file_data,
+                    filename: file.filename,
+                })),
+        )
     }
 }
 

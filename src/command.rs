@@ -25,6 +25,8 @@ pub enum Command {
         #[serde(default)]
         images: Vec<String>,
         #[serde(default)]
+        files: Vec<session::PromptFile>,
+        #[serde(default)]
         metadata: Value,
     },
     Steer {
@@ -33,6 +35,8 @@ pub enum Command {
         prompt: String,
         #[serde(default)]
         images: Vec<String>,
+        #[serde(default)]
+        files: Vec<session::PromptFile>,
         #[serde(default)]
         into: Option<String>,
     },
@@ -156,11 +160,12 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
             request_id,
             prompt,
             images,
+            files,
             metadata,
         } => {
             host.sessions
                 .get(&session)?
-                .submit(host, request_id, prompt, images, metadata)
+                .submit(host, request_id, prompt, images, files, metadata)
                 .await
         }
         Command::Steer {
@@ -168,11 +173,12 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
             request_id,
             prompt,
             images,
+            files,
             into,
         } => {
             host.sessions
                 .get(&session)?
-                .steer(&request_id, prompt, images, into.as_deref())
+                .steer(&request_id, prompt, images, files, into.as_deref())
                 .await
         }
         Command::MoveQueued {

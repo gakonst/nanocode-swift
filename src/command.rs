@@ -82,6 +82,9 @@ pub enum Command {
         session: String,
         mode: crate::approvals::Mode,
     },
+    Checkpoint {
+        session: String,
+    },
     Settle {
         session: String,
     },
@@ -207,6 +210,7 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
         Command::PermissionMode { session, mode } => {
             host.sessions.get(&session)?.set_permission_mode(mode)
         }
+        Command::Checkpoint { session } => host.sessions.get(&session)?.checkpoint().await,
         Command::Settle { session } => host
             .sessions
             .get(&session)?

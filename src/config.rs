@@ -114,6 +114,16 @@ pub struct McpServerConfig {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Fork {
+    pub session: String,
+    #[serde(default)]
+    pub checkpoint: Option<nanocode::SessionCheckpoint>,
+    #[serde(default)]
+    pub before: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Configuration {
     #[serde(default)]
     pub hands: Vec<HandLink>,
@@ -160,6 +170,8 @@ pub struct Configuration {
     pub permission_mode: Option<crate::approvals::Mode>,
     #[serde(default)]
     pub allow: Vec<String>,
+    #[serde(default)]
+    pub fork: Option<Fork>,
 }
 
 const fn enabled() -> bool {

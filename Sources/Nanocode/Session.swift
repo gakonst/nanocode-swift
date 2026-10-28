@@ -159,11 +159,31 @@ public struct McpServer: Sendable, Hashable {
   }
 }
 
+public struct Fork: Sendable {
+  public var session: String
+  public var checkpoint: JSON?
+  public var before: String?
+
+  public init(session: String, checkpoint: JSON? = nil, before: String? = nil) {
+    self.session = session
+    self.checkpoint = checkpoint
+    self.before = before
+  }
+
+  var json: JSON {
+    var object: [String: JSON] = ["session": .string(session)]
+    if let checkpoint { object["checkpoint"] = checkpoint }
+    if let before { object["before"] = .string(before) }
+    return .object(object)
+  }
+}
+
 public struct SessionConfiguration: Sendable {
   public var hands: [HandLink] = []
   public var mcpServers: [McpServer] = []
   public var permissionMode: PermissionMode?
   public var allow: [String] = []
+  public var fork: Fork?
   public var sessionID: String
   public var provider: Provider
   public var model: String?
@@ -237,6 +257,7 @@ public struct SessionConfiguration: Sendable {
     if !mcpServers.isEmpty { object["mcp_servers"] = .array(mcpServers.map(\.json)) }
     if let permissionMode { object["permission_mode"] = .string(permissionMode.rawValue) }
     if !allow.isEmpty { object["allow"] = .array(allow.map(JSON.string)) }
+    if let fork { object["fork"] = fork.json }
     return .object(object)
   }
 }
@@ -386,6 +407,10 @@ public final class Session: Sendable {
 
   public func setPermissionMode(_ mode: PermissionMode) async throws {
     try await runtime.command("permission_mode", ["session": .string(id), "mode": .string(mode.rawValue)])
+  }
+
+  public func checkpoint() async throws -> JSON {
+    try await runtime.command("checkpoint", ["session": .string(id)])
   }
 
   public func preconnect() async throws {

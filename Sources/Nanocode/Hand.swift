@@ -79,9 +79,13 @@ public struct HandConfiguration: Sendable {
   public var shell: Bool?
   public var tools: [HostTool]
   public var headers: [String: String]
+  public var capabilities: [HandCapability]
+  public var toolsOnly: Bool
+  public var environment: HandEnvironment?
 
   public init(id: String = "default", url: String, token: String, name: String? = nil, workspace: URL? = nil,
-              shell: Bool? = nil, tools: [HostTool] = [], headers: [String: String] = [:]) {
+              shell: Bool? = nil, tools: [HostTool] = [], headers: [String: String] = [:],
+              capabilities: [HandCapability] = [], toolsOnly: Bool = false, environment: HandEnvironment? = nil) {
     self.id = id
     self.url = url
     self.token = token
@@ -90,6 +94,9 @@ public struct HandConfiguration: Sendable {
     self.shell = shell
     self.tools = tools
     self.headers = headers
+    self.capabilities = capabilities
+    self.toolsOnly = toolsOnly
+    self.environment = environment
   }
 
   var json: JSON {
@@ -100,6 +107,9 @@ public struct HandConfiguration: Sendable {
     if let name { object["name"] = .string(name) }
     if let workspace { object["workspace"] = .string(workspace.path) }
     if let shell { object["shell"] = .bool(shell) }
+    if !capabilities.isEmpty { object["capabilities"] = .array(capabilities.map(\.spec)) }
+    if toolsOnly { object["tools_only"] = .bool(true) }
+    if let environment { object["environment"] = environment.json }
     return .object(object)
   }
 
@@ -178,11 +188,13 @@ public extension NanocodeRuntime {
 
   func startHand(_ configuration: HandConfiguration) async throws -> HandStatus? {
     register(configuration.tools)
+    router.state.withLock { $0.capabilities[configuration.id] = configuration.capabilities }
     return HandStatus(try await command("hand_start", configuration.json))
   }
 
   func stopHand(_ id: String = "default") async throws {
     try await command("hand_stop", ["id": .string(id)])
+    router.state.withLock { $0.capabilities[id] = nil }
   }
 
   func hands() async throws -> [HandStatus] {

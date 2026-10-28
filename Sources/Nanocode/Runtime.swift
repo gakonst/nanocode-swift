@@ -154,6 +154,7 @@ final class Router: @unchecked Sendable {
     var sessions: [String: [UUID: AsyncStream<SessionEvent>.Continuation]] = [:]
     var listeners: [UUID: AsyncStream<RuntimeEvent>.Continuation] = [:]
     var tools: [String: HostTool] = [:]
+    var capabilities: [String: [HandCapability]] = [:]
     var approve: (@Sendable (ApprovalRequest) async -> ApprovalDecision)?
     var subscriptions: (any SubscriptionStore)?
     var willEdit: (@Sendable (_ sessionID: String, _ paths: [String]) async -> Void)?
@@ -251,6 +252,10 @@ final class Router: @unchecked Sendable {
   private func handle(call: JSON) {
     guard let id = call["id"]?.uint64 else { return }
     let body = call["body"] ?? .null
+    if call["kind"]?.string == "capability" {
+      answerCapability(id: id, body: body)
+      return
+    }
     if call["kind"]?.string == "approval" {
       guard let approve = state.withLock({ $0.approve }) else {
         send(["command": ["reply": ["id": .number(Double(id)), "error": "this app does not answer approvals"]]])

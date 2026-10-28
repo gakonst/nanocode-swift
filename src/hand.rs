@@ -32,6 +32,12 @@ pub struct Start {
     pub tools: Vec<HostTool>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub environment: Option<nanocode::HandEnvironment>,
+    #[serde(default)]
+    pub capabilities: Vec<crate::capabilities::Spec>,
+    #[serde(default)]
+    pub tools_only: bool,
 }
 
 pub struct Running {
@@ -132,6 +138,19 @@ pub async fn start(host: &Arc<Host>, start: Start) -> Result<Value, String> {
     }
     for (name, value) in start.headers {
         hand = hand.header(name, value);
+    }
+    if let Some(environment) = start.environment {
+        hand = hand.environment(environment);
+    }
+    if !start.capabilities.is_empty() {
+        hand = hand.capabilities(Arc::new(crate::capabilities::Device::new(
+            host,
+            start.id.clone(),
+            start.capabilities,
+        )));
+    }
+    if start.tools_only {
+        hand = hand.tools_only();
     }
     let activity = hand.activity();
     let id = start.id.clone();

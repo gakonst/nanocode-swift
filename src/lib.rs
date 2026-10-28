@@ -2,6 +2,7 @@
 
 mod approvals;
 mod bridge;
+mod capabilities;
 mod catalog;
 mod command;
 mod config;

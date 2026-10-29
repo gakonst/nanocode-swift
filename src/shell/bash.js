@@ -25096,6 +25096,8 @@ const parentOf = path => { const i = path.lastIndexOf("/"); return i <= 0 ? "/" 
 const decoder = new TextDecoder();
 let py, start, cancel, loading, micropip = false, mirrored = [], mirror = null, known = new Map(), tracking = null;
 const WRITES = 1 | 2 | 64 | 512 | 1024;
+const PARKED_BYTES = 64 * 1024 * 1024;
+const parked = new Map();
 function absolute(path) {
   if (path.startsWith("/")) return path;
   const cwd = py.FS.cwd();
@@ -25154,14 +25156,54 @@ function prune(fs, path, dirs, listing) {
   if (!dirs.has(path) && !mirrored.includes(path)) return unmirror(fs, path);
   for (const name of fs.readdir(path)) if (name !== "." && name !== "..") prune(fs, join(path, name), dirs, listing);
 }
+function size(fs, path) {
+  if (reserved(path) || !fs.analyzePath(path).exists) return 0;
+  const stat = fs.stat(path);
+  if (fs.isFile(stat.mode)) return stat.size;
+  if (!fs.isDir(stat.mode)) return 0;
+  return fs.readdir(path).filter(name => name !== "." && name !== "..").reduce((total, name) => total + size(fs, join(path, name)), 0);
+}
+function park(fs) {
+  const bytes = mirrored.reduce((total, root) => total + size(fs, root), 0);
+  if (mirror !== null && bytes <= PARKED_BYTES) {
+    const files = new Map(), dirs = [];
+    const visit = path => {
+      if (reserved(path) || !fs.analyzePath(path).exists) return;
+      const mode = fs.stat(path).mode;
+      if (fs.isFile(mode)) return void files.set(path, fs.readFile(path));
+      if (!fs.isDir(mode)) return;
+      dirs.push(path);
+      for (const name of fs.readdir(path)) if (name !== "." && name !== "..") visit(join(path, name));
+    };
+    for (const root of mirrored) visit(root);
+    parked.delete(mirror);
+    parked.set(mirror, { files, dirs, bytes, known, mirrored });
+    let total = 0;
+    for (const entry of parked.values()) total += entry.bytes;
+    for (const [id, entry] of parked) {
+      if (total <= PARKED_BYTES) break;
+      parked.delete(id);
+      total -= entry.bytes;
+    }
+  }
+  for (const path of mirrored) unmirror(fs, path);
+  mirrored = [];
+  known = new Map();
+}
 function sync(message) {
   const fs = py.FS;
   fs.chdir("/");
   if (message.mirror !== mirror) {
-    for (const path of mirrored) unmirror(fs, path);
-    mirrored = [];
-    known.clear();
+    park(fs);
     mirror = message.mirror;
+    const found = parked.get(mirror);
+    if (found) {
+      parked.delete(mirror);
+      for (const path of found.dirs) fs.mkdirTree(path);
+      for (const [path, data] of found.files) fs.writeFile(path, data);
+      known = found.known;
+      mirrored = found.mirrored;
+    }
   }
   const listing = new Map(message.files);
   const dirs = new Set(message.dirs);
@@ -25875,7 +25917,8 @@ async def run(request):
 		const maxFiles = options.maxFiles ?? 2e4;
 		const mirror = {
 			id: "",
-			known: /* @__PURE__ */ new Map()
+			known: /* @__PURE__ */ new Map(),
+			adopted: /* @__PURE__ */ new Map()
 		};
 		let local = options.mirror ?? "";
 		const handler = async (ctx) => {
@@ -25885,7 +25928,7 @@ async def run(request):
 				return 0;
 			}
 			if (options.remote) {
-				if (!options.shared) mirror.id ||= crypto.randomUUID();
+				if (!options.shared) mirror.id ||= options.mirror ?? crypto.randomUUID();
 				return executeRemote(ctx, options.remote, mode, maxBytes, maxFiles, mirror, options.batchBytes ?? 6291456, options.shared ?? false);
 			}
 			if (!canCompile()) {
@@ -26012,6 +26055,15 @@ async def run(request):
 			if (ctx.signal.aborted) throw new CommandError("interrupted", 130);
 			throw new CommandError("timed out after " + ctx.limits.timeoutMs + " ms", 124);
 		}
+		const send = async (request) => {
+			const adopted = [...mirror.adopted];
+			const reply = await call(adopted.length ? {
+				...request,
+				stamps: [...request.stamps ?? [], ...adopted]
+			} : request);
+			for (const [path, stamp] of adopted) if (mirror.adopted.get(path) === stamp) mirror.adopted.delete(path);
+			return reply;
+		};
 		const tree = await scan(ctx.fs, unique, maxBytes, maxFiles, maxBytes);
 		if (ctx.signal.aborted) throw new CommandError("interrupted", 130);
 		const base = {
@@ -26035,6 +26087,11 @@ async def run(request):
 			stdin: "",
 			keep: []
 		};
+		const stamped = (files) => files.map(([path]) => [path, tree.files.get(path)]);
+		const adopt = (path, stamp) => {
+			mirror.known.set(path, stamp);
+			mirror.adopted.set(path, stamp);
+		};
 		const upload = async (paths) => {
 			let batch = [];
 			let bytes = 0;
@@ -26042,20 +26099,22 @@ async def run(request):
 				const data = await ctx.fs.read(path).catch(() => null);
 				if (!data) continue;
 				if (data.length > batchBytes) {
-					for (let offset = 0; offset < data.length; offset += batchBytes) if ((await call({
+					for (let offset = 0; offset < data.length; offset += batchBytes) if ((await send({
 						...control,
 						files: [[path, base64(data.subarray(offset, offset + batchBytes))]],
 						sync: true,
-						append: offset > 0
+						append: offset > 0,
+						...offset + batchBytes >= data.length ? { stamps: [[path, tree.files.get(path)]] } : {}
 					})).mirror !== mirror.id) throw new CommandError(ctx.name + ": " + path + " is larger than one upload and the Python service does not keep files between runs; move it out of this directory", 127);
 					mirror.known.set(path, tree.files.get(path));
 					continue;
 				}
 				if (batch.length && bytes + data.length > batchBytes) {
-					if ((await call({
+					if ((await send({
 						...control,
 						files: batch,
-						sync: true
+						sync: true,
+						stamps: stamped(batch)
 					})).mirror !== mirror.id) throw new CommandError(ctx.name + ": this directory holds more than one upload and the Python service does not keep files between runs; run python3 from a smaller directory", 127);
 					for (const [sent] of batch) mirror.known.set(sent, tree.files.get(sent));
 					batch = [];
@@ -26066,13 +26125,26 @@ async def run(request):
 			}
 			return batch;
 		};
+		if (!mirror.known.size && tree.files.size) {
+			const listing = [...tree.files];
+			const reply = await send({
+				...control,
+				files: [],
+				sync: true,
+				listing
+			});
+			if (reply.mirror === mirror.id) {
+				const missing = new Set(reply.missing ?? []);
+				for (const [path, stamp] of listing) if (!missing.has(path)) mirror.known.set(path, stamp);
+			}
+		}
 		let pending = [...tree.files.keys()].filter((path) => mirror.known.get(path) !== tree.files.get(path));
 		let reply;
 		for (let attempt = 0;; attempt++) {
 			const files = await upload(pending);
 			const sent = new Set(files.map(([path]) => path));
 			const keep = [...tree.files.keys()].filter((path) => !sent.has(path) && mirror.known.get(path) === tree.files.get(path));
-			reply = await call({
+			reply = await send({
 				...base,
 				kind,
 				target,
@@ -26080,6 +26152,7 @@ async def run(request):
 				filename: mode === "version" ? "" : mode.filename,
 				files,
 				keep,
+				stamps: stamped(files),
 				stdin: mode !== "version" && mode.kind === "stdin" ? "" : stdin
 			});
 			if (!reply.missing?.length || attempt >= 2) break;
@@ -26097,7 +26170,7 @@ async def run(request):
 			const large = new Map(reply.large ?? []);
 			for (const [path, data] of reply.files) if (data !== null) changed.set(path, data);
 			for (let more = reply.more ?? []; more.length;) {
-				const fetched = await call({
+				const fetched = await send({
 					...control,
 					files: [],
 					fetch: more
@@ -26128,13 +26201,13 @@ async def run(request):
 				await mkdirs(ctx.fs, parentOf(path));
 				await ctx.fs.write(path, unbase64(data));
 				const stat = await ctx.fs.stat(path);
-				if (stat && reply.mirror === mirror.id) mirror.known.set(path, stat.size + ":" + stat.mtime);
+				if (stat && reply.mirror === mirror.id) adopt(path, stat.size + ":" + stat.mtime);
 			}
 			for (const [path, size] of large) {
 				await mkdirs(ctx.fs, parentOf(path));
 				try {
 					for (let offset = 0; offset < size || offset === 0; offset += batchBytes) {
-						const data = (await call({
+						const data = (await send({
 							...control,
 							files: [],
 							fetch: [path],
@@ -26152,7 +26225,7 @@ async def run(request):
 					continue;
 				}
 				const stat = await ctx.fs.stat(path);
-				if (stat && reply.mirror === mirror.id) mirror.known.set(path, stat.size + ":" + stat.mtime);
+				if (stat && reply.mirror === mirror.id) adopt(path, stat.size + ":" + stat.mtime);
 			}
 		}
 		if (reply.status >= 0) return reply.status;

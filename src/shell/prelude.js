@@ -471,11 +471,7 @@ for (const name of ["exec_command", "write_stdin", "apply_patch"]) {
 }
 const core = { TextDecoder, TextEncoder, byteView, callWasm, digestBytes, hostFunction, setTimeoutWithArgs, compareText, decodeBytes, encodeText, fromBase64, fromHex, fromLatin1, fromUtf8, joinBytes, putBytes, randomBytes, toBase64, toHex, toLatin1, utf8 };
 const modules = {};
-const lazyBody = (name) => {
-  const source = lazySources[name].toString();
-  return source.slice(source.indexOf("/*") + 2, source.lastIndexOf("*/")).split("*\u0001/").join("*/");
-};
-const load = (name) => modules[name] ??= new Function("core", lazyBody(name))(core);
+const load = (name) => modules[name] ??= new Function("core", lazySources[name])(core);
 const lazyClass = (module, name) => {
   const real = () => load(module)[name];
   const proxy = new Proxy(function () {}, {

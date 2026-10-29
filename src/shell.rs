@@ -1147,12 +1147,7 @@ fn finished(result: &str) -> Result<Ran, String> {
 fn prelude() -> String {
     let sources = LAZY
         .iter()
-        .map(|(name, source)| {
-            format!(
-                "{name}: function () {{/*{}*/}}",
-                source.replace("*/", "*\u{1}/")
-            )
-        })
+        .map(|(name, source)| format!("{name}: {}", Json::String((*source).to_owned())))
         .collect::<Vec<_>>()
         .join(",\n");
     format!("(function (tools, call) {{\nconst lazySources = {{\n{sources}\n}};\n{PRELUDE}\n}})")

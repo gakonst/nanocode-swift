@@ -4861,6 +4861,8 @@ const parentOf = path => { const i = path.lastIndexOf("/"); return i <= 0 ? "/" 
 const decoder = new TextDecoder();
 let py, start, cancel, loading, micropip = false, mirrored = [], mirror = null, known = new Map(), tracking = null;
 const WRITES = 1 | 2 | 64 | 512 | 1024;
+const PARKED_BYTES = 64 * 1024 * 1024;
+const parked = new Map();
 function absolute(path) {
   if (path.startsWith("/")) return path;
   const cwd = py.FS.cwd();
@@ -4919,14 +4921,54 @@ function prune(fs, path, dirs, listing) {
   if (!dirs.has(path) && !mirrored.includes(path)) return unmirror(fs, path);
   for (const name of fs.readdir(path)) if (name !== "." && name !== "..") prune(fs, join(path, name), dirs, listing);
 }
+function size(fs, path) {
+  if (reserved(path) || !fs.analyzePath(path).exists) return 0;
+  const stat = fs.stat(path);
+  if (fs.isFile(stat.mode)) return stat.size;
+  if (!fs.isDir(stat.mode)) return 0;
+  return fs.readdir(path).filter(name => name !== "." && name !== "..").reduce((total, name) => total + size(fs, join(path, name)), 0);
+}
+function park(fs) {
+  const bytes = mirrored.reduce((total, root) => total + size(fs, root), 0);
+  if (mirror !== null && bytes <= PARKED_BYTES) {
+    const files = new Map(), dirs = [];
+    const visit = path => {
+      if (reserved(path) || !fs.analyzePath(path).exists) return;
+      const mode = fs.stat(path).mode;
+      if (fs.isFile(mode)) return void files.set(path, fs.readFile(path));
+      if (!fs.isDir(mode)) return;
+      dirs.push(path);
+      for (const name of fs.readdir(path)) if (name !== "." && name !== "..") visit(join(path, name));
+    };
+    for (const root of mirrored) visit(root);
+    parked.delete(mirror);
+    parked.set(mirror, { files, dirs, bytes, known, mirrored });
+    let total = 0;
+    for (const entry of parked.values()) total += entry.bytes;
+    for (const [id, entry] of parked) {
+      if (total <= PARKED_BYTES) break;
+      parked.delete(id);
+      total -= entry.bytes;
+    }
+  }
+  for (const path of mirrored) unmirror(fs, path);
+  mirrored = [];
+  known = new Map();
+}
 function sync(message) {
   const fs = py.FS;
   fs.chdir("/");
   if (message.mirror !== mirror) {
-    for (const path of mirrored) unmirror(fs, path);
-    mirrored = [];
-    known.clear();
+    park(fs);
     mirror = message.mirror;
+    const found = parked.get(mirror);
+    if (found) {
+      parked.delete(mirror);
+      for (const path of found.dirs) fs.mkdirTree(path);
+      for (const [path, data] of found.files) fs.writeFile(path, data);
+      known = found.known;
+      mirrored = found.mirrored;
+    }
   }
   const listing = new Map(message.files);
   const dirs = new Set(message.dirs);

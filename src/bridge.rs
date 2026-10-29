@@ -48,6 +48,7 @@ pub struct Start {
     pub data_dir: PathBuf,
     #[serde(default)]
     pub tempo_home: Option<PathBuf>,
+    pub shell: PathBuf,
 }
 
 pub struct Host {
@@ -161,6 +162,7 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         shell: Arc::new(Shell::new(
             start.data_dir.join("workspace"),
             start.data_dir.join("shell"),
+            start.shell,
         )),
         data_dir: start.data_dir,
         storage: OnceCell::new(),

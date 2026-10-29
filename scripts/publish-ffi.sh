@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 repository=${GITHUB_REPOSITORY:-gakonst/nanocode-swift}
-fingerprint=$(cat Cargo.toml Cargo.lock sdk-revision.json ts-revision.json rust-toolchain.toml scripts/build-ffi.sh include/* $(find src -type f | sort) | shasum -a 256 | cut -c1-20)
+fingerprint=$(cat Cargo.toml Cargo.lock sdk-revision.json rust-toolchain.toml scripts/build-ffi.sh include/* $(find src -type f | sort) | shasum -a 256 | cut -c1-20)
 tag="ffi-$fingerprint"
 url="https://github.com/$repository/releases/download/$tag/NanocodeFFI.xcframework.zip"
 if [[ "${1:-}" == --fingerprint ]]; then

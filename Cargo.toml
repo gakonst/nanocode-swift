@@ -11,7 +11,7 @@ autobenches = false
 
 [lib]
 name = "nanocode_swift"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib"]
 test = false
 doctest = false
 bench = false

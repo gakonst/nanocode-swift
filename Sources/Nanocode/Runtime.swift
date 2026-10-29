@@ -394,7 +394,10 @@ public final class NanocodeRuntime: @unchecked Sendable {
     try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
     router = Router()
     context = Unmanaged.passRetained(router).toOpaque()
-    var config: [String: JSON] = ["data_dir": .string(dataDirectory.path)]
+    guard let shell = Bundle.module.url(forResource: "shell", withExtension: nil) else {
+      throw NanocodeError("the shell's JavaScript is missing from the package")
+    }
+    var config: [String: JSON] = ["data_dir": .string(dataDirectory.path), "shell": .string(shell.path)]
     if let tempoHome { config["tempo_home"] = .string(tempoHome.path) }
     let data = JSON.object(config).data()
     let handle = data.withUnsafeBytes { buffer in

@@ -45,15 +45,7 @@ use crate::{bridge::Host, files::local, session::text};
 
 mod wasm;
 
-const HOST: &str = include_str!("shell/host.js");
-const PRELUDE: &str = include_str!("shell/prelude.js");
-const BASH: &str = include_str!("shell/bash.js");
-const LAZY: [(&str, &str); 4] = [
-    ("crypto", include_str!("shell/prelude/crypto.js")),
-    ("extra", include_str!("shell/prelude/extra.js")),
-    ("intl", include_str!("shell/prelude/intl.js")),
-    ("web", include_str!("shell/prelude/web.js")),
-];
+const LAZY: [&str; 4] = ["crypto", "extra", "intl", "web"];
 const STACK: usize = 32 << 20;
 const MEMORY: usize = 1 << 30;
 const COMMAND_MEMORY: u64 = 256 << 20;
@@ -96,6 +88,7 @@ enum Message {
 pub struct Shell {
     cwd: PathBuf,
     cache: PathBuf,
+    sources: PathBuf,
     host: Arc<OnceLock<Weak<Host>>>,
     worker: OnceLock<Worker>,
     next: AtomicU64,
@@ -121,10 +114,11 @@ impl Drop for Pending<'_> {
 }
 
 impl Shell {
-    pub fn new(cwd: PathBuf, cache: PathBuf) -> Self {
+    pub fn new(cwd: PathBuf, cache: PathBuf, sources: PathBuf) -> Self {
         Self {
             cwd,
             cache,
+            sources,
             host: Arc::new(OnceLock::new()),
             worker: OnceLock::new(),
             next: AtomicU64::new(1),
@@ -144,7 +138,14 @@ impl Shell {
     ) -> Result<Ran, String> {
         let worker = self
             .worker
-            .get_or_init(|| Worker::spawn(&self.cwd, self.cache.clone(), Arc::clone(&self.host)));
+            .get_or_init(|| {
+                Worker::spawn(
+                    &self.cwd,
+                    self.cache.clone(),
+                    self.sources.clone(),
+                    Arc::clone(&self.host),
+                )
+            });
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let request = json!({
             "script": script,
@@ -183,7 +184,12 @@ impl Drop for Shell {
 }
 
 impl Worker {
-    fn spawn(cwd: &Path, cache: PathBuf, host: Arc<OnceLock<Weak<Host>>>) -> Self {
+    fn spawn(
+        cwd: &Path,
+        cache: PathBuf,
+        sources: PathBuf,
+        host: Arc<OnceLock<Weak<Host>>>,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
         let container = std::env::temp_dir().parent().map(Path::to_path_buf);
@@ -205,7 +211,7 @@ impl Worker {
         let _ = std::thread::Builder::new()
             .name("nanocode-shell".to_owned())
             .stack_size(STACK)
-            .spawn(move || work(&receiver, network, &flag, &config, &cache));
+            .spawn(move || work(&receiver, network, &flag, &config, &cache, &sources));
         Self { sender, stopped }
     }
 }
@@ -1144,13 +1150,35 @@ fn finished(result: &str) -> Result<Ran, String> {
     serde_json::from_value(value).map_err(text)
 }
 
-fn prelude() -> String {
-    let sources = LAZY
-        .iter()
-        .map(|(name, source)| format!("{name}: {}", Json::String((*source).to_owned())))
-        .collect::<Vec<_>>()
-        .join(",\n");
-    format!("(function (tools, call) {{\nconst lazySources = {{\n{sources}\n}};\n{PRELUDE}\n}})")
+struct Sources {
+    host: String,
+    prelude: String,
+    bash: String,
+}
+
+impl Sources {
+    fn load(directory: &Path) -> Result<Self, String> {
+        let read = |name: &str| {
+            std::fs::read_to_string(directory.join(name))
+                .map_err(|error| format!("read {}: {error}", directory.join(name).display()))
+        };
+        let lazy = LAZY
+            .iter()
+            .map(|name| {
+                read(&format!("prelude/{name}.js"))
+                    .map(|source| format!("{name}: {}", Json::String(source)))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join(",\n");
+        Ok(Self {
+            host: read("host.js")?,
+            prelude: format!(
+                "(function (tools, call) {{\nconst lazySources = {{\n{lazy}\n}};\n{}\n}})",
+                read("prelude.js")?
+            ),
+            bash: read("bash.js")?,
+        })
+    }
 }
 
 fn call<'js, A: IntoArgs<'js>>(ctx: &Ctx<'js>, name: &str, arguments: A) -> Result<(), String> {
@@ -1165,8 +1193,8 @@ fn call<'js, A: IntoArgs<'js>>(ctx: &Ctx<'js>, name: &str, arguments: A) -> Resu
         .map_err(|error| error.to_string())
 }
 
-fn bundle<'js>(ctx: &Ctx<'js>, cache: &Path) -> rquickjs::Result<()> {
-    let digest = <sha2::Sha256 as sha2::Digest>::digest(BASH.as_bytes());
+fn bundle<'js>(ctx: &Ctx<'js>, cache: &Path, bash: &str) -> rquickjs::Result<()> {
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(bash.as_bytes());
     let name = digest[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1184,7 +1212,7 @@ fn bundle<'js>(ctx: &Ctx<'js>, cache: &Path) -> rquickjs::Result<()> {
     let module = Module::declare(
         ctx.clone(),
         "nanocode:bash",
-        format!("{BASH}\nglobalThis.NanocodeBash = NanocodeBash;\n"),
+        format!("{bash}\nglobalThis.NanocodeBash = NanocodeBash;\n"),
     )?;
     if let Ok(bytes) = module.write(WriteOptions::default()) {
         let part = file.with_extension("part");
@@ -1202,13 +1230,15 @@ fn open<'js>(
     network: &Rc<Network>,
     config: &str,
     cache: &Path,
+    sources: &Path,
 ) -> Result<(), String> {
     let caught = |error: rquickjs::CaughtError<'_>| error.to_string();
+    let sources = Sources::load(sources)?;
     install(ctx, state, network).catch(ctx).map_err(caught)?;
-    ctx.eval::<Value, _>(HOST).catch(ctx).map_err(caught)?;
-    let prelude: Function = ctx.eval(prelude()).catch(ctx).map_err(caught)?;
+    ctx.eval::<Value, _>(sources.host).catch(ctx).map_err(caught)?;
+    let prelude: Function = ctx.eval(sources.prelude).catch(ctx).map_err(caught)?;
     call(ctx, "__install", (prelude,))?;
-    bundle(ctx, cache).catch(ctx).map_err(caught)?;
+    bundle(ctx, cache, &sources.bash).catch(ctx).map_err(caught)?;
     call(ctx, "__open", (config.to_owned(),))
 }
 
@@ -1239,6 +1269,7 @@ fn work(
     stopped: &Arc<AtomicBool>,
     config: &str,
     cache: &Path,
+    sources: &Path,
 ) {
     let runtime = match Runtime::new() {
         Ok(runtime) => runtime,
@@ -1254,7 +1285,7 @@ fn work(
     };
     let state = Rc::new(RefCell::new(State::default()));
     let network = Rc::new(network);
-    let opened = context.with(|ctx| open(&ctx, &state, &network, config, cache));
+    let opened = context.with(|ctx| open(&ctx, &state, &network, config, cache, sources));
     while !stopped.load(Ordering::Relaxed) {
         settle(&runtime, stopped);
         let now = Instant::now();

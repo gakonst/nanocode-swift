@@ -28,7 +28,7 @@ let package = Package(
     .target(
       name: "Nanocode",
       dependencies: ["NanocodeCore", "NanocodeFFI"],
-      resources: [.copy("Resources/python.js"), .copy("Resources/pyodide-host.js")],
+      resources: [.copy("Resources/python.js"), .copy("Resources/pyodide-host.js"), .copy("Resources/shell")],
       linkerSettings: [
         .linkedFramework("Security"),
         .linkedFramework("SystemConfiguration"),

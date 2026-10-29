@@ -1056,3 +1056,182 @@ extension DemoTools {
   }
   #endif
 }
+
+extension DemoTools {
+  static var capabilities: [HandCapability] {
+    var list = [
+      HandCapability(name: "photos", description: "The photo library: list, read and save photos", tools: ["photos"],
+                     permission: { await photosPermission() }, request: { _ in await askPhotos() }),
+      HandCapability(name: "contacts", description: "The address book: search and add contacts", tools: ["contacts"],
+                     permission: { await contactsPermission() }, request: { _ in await askContacts() }),
+      HandCapability(name: "calendar", description: "Calendar events: list and add them", tools: ["calendar"],
+                     permission: { await eventsPermission(.event) }, request: { _ in await askEvents(.event) }),
+      HandCapability(name: "reminders", description: "Reminders: list, add and complete them", tools: ["reminders"],
+                     permission: { await eventsPermission(.reminder) }, request: { _ in await askEvents(.reminder) }),
+      HandCapability(name: "location", description: "Where this device is, and places near it", tools: ["location"],
+                     permission: { await locationPermission() }, request: { _ in await askLocation() }),
+      HandCapability(name: "notifications", description: "Notifications from this app", tools: ["notify"],
+                     permission: { await notificationsPermission() }, request: { _ in await askNotifications() }),
+      HandCapability(name: "microphone", description: "Listening through the microphone and transcribing speech", tools: ["listen"],
+                     permission: { await listeningPermission() }, request: { _ in await askListening() }),
+      HandCapability(name: "bluetooth", description: "Bluetooth Low Energy devices nearby", tools: ["bluetooth"],
+                     permission: { await bluetoothPermission() }, request: { _ in await askBluetooth() }),
+    ]
+    #if !os(macOS)
+    list += [
+      HandCapability(name: "camera", description: "Taking photos with the camera", tools: ["camera"],
+                     permission: { await cameraPermission() }, request: { _ in await askCamera() }),
+      HandCapability(name: "motion", description: "Steps and activity from the motion sensors", tools: ["motion"],
+                     permission: { await motionPermission() }),
+      HandCapability(name: "music", description: "The music library and playback", tools: ["music"],
+                     permission: { await musicPermission() }, request: { _ in await askMusic() }),
+    ]
+    #endif
+    return list
+  }
+
+  static func askPhotos() async -> HandPermission {
+    _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+    return photosPermission()
+  }
+
+  static func askContacts() async -> HandPermission {
+    _ = try? await CNContactStore().requestAccess(for: .contacts)
+    return contactsPermission()
+  }
+
+  static func askEvents(_ type: EKEntityType) async -> HandPermission {
+    _ = try? await (type == .event ? events.requestFullAccessToEvents() : events.requestFullAccessToReminders())
+    return eventsPermission(type)
+  }
+
+  static func askNotifications() async -> HandPermission {
+    _ = try? await allowNotifications()
+    return await notificationsPermission()
+  }
+
+  static func askListening() async -> HandPermission {
+    _ = await speechAccess()
+    _ = await AVCaptureDevice.requestAccess(for: .audio)
+    return listeningPermission()
+  }
+
+  static func askBluetooth() async -> HandPermission {
+    _ = try? await Scanner().scan(seconds: 1)
+    return bluetoothPermission()
+  }
+
+  static var environment: HandEnvironment? {
+    #if os(macOS)
+    nil
+    #else
+    HandEnvironment(platform: "ios", osVersion: "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion), \(UIDevice.current.model)",
+                    shell: "bash (nanocode-ts just-bash over this app's files)")
+    #endif
+  }
+
+  static func photosPermission() -> HandPermission {
+    switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+    case .authorized, .limited: .granted
+    case .denied, .restricted: .denied
+    case .notDetermined: .prompt
+    @unknown default: .prompt
+    }
+  }
+
+  static func contactsPermission() -> HandPermission {
+    let status = CNContactStore.authorizationStatus(for: .contacts)
+    #if os(iOS)
+    if #available(iOS 18, *), status == .limited { return .granted }
+    #endif
+    switch status {
+    case .authorized: return .granted
+    case .denied, .restricted: return .denied
+    default: return .prompt
+    }
+  }
+
+  static func eventsPermission(_ type: EKEntityType) -> HandPermission {
+    switch EKEventStore.authorizationStatus(for: type) {
+    case .fullAccess: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+
+  static func locationPermission() -> HandPermission {
+    switch locator.authorizationStatus {
+    case .authorizedAlways, .authorizedWhenInUse: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+
+  static func askLocation() async -> HandPermission {
+    if locator.authorizationStatus == .notDetermined {
+      locator.requestWhenInUseAuthorization()
+      for _ in 0..<600 where locator.authorizationStatus == .notDetermined { try? await Task.sleep(nanoseconds: 100_000_000) }
+    }
+    return locationPermission()
+  }
+
+  static func notificationsPermission() async -> HandPermission {
+    switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+    case .notDetermined: .prompt
+    case .denied: .denied
+    default: .granted
+    }
+  }
+
+  static func listeningPermission() -> HandPermission {
+    let speech = SFSpeechRecognizer.authorizationStatus()
+    let microphone = AVCaptureDevice.authorizationStatus(for: .audio)
+    if speech == .authorized && microphone == .authorized { return .granted }
+    if [.denied, .restricted].contains(speech) || [.denied, .restricted].contains(microphone) { return .denied }
+    return .prompt
+  }
+
+  static func bluetoothPermission() -> HandPermission {
+    switch CBManager.authorization {
+    case .allowedAlways: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+
+  #if !os(macOS)
+  static func askCamera() async -> HandPermission {
+    _ = await AVCaptureDevice.requestAccess(for: .video)
+    return cameraPermission()
+  }
+
+  static func askMusic() async -> HandPermission {
+    _ = await MPMediaLibrary.requestAuthorization()
+    return musicPermission()
+  }
+
+  static func cameraPermission() -> HandPermission {
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+
+  static func motionPermission() -> HandPermission {
+    switch CMMotionActivityManager.authorizationStatus() {
+    case .authorized: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+
+  static func musicPermission() -> HandPermission {
+    switch MPMediaLibrary.authorizationStatus() {
+    case .authorized: .granted
+    case .denied, .restricted: .denied
+    default: .prompt
+    }
+  }
+  #endif
+}

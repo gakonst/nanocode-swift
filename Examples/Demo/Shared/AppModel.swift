@@ -348,7 +348,8 @@ final class AppModel {
       }
     }
     if let command = UserDefaults.standard.string(forKey: "NanocodeHand"), let parsed = HandConfiguration.parse(command: command) {
-      await hand.start(HandConfiguration(url: parsed.url, token: parsed.token, name: Self.handName, workspace: workspace, tools: DemoTools.all))
+      await hand.start(HandConfiguration(url: parsed.url, token: parsed.token, name: Self.handName, workspace: workspace, tools: DemoTools.all,
+                                         capabilities: DemoTools.capabilities, environment: DemoTools.environment))
     }
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
@@ -463,7 +464,8 @@ final class AppModel {
       await cloudHand.stop()
       handFor = session.id
       await cloudHand.start(HandConfiguration(url: access.url.absoluteString, token: access.token, name: Self.handName,
-                                              workspace: workspace, tools: DemoTools.all))
+                                              workspace: workspace, tools: DemoTools.all,
+                                              capabilities: DemoTools.capabilities, environment: DemoTools.environment))
       for _ in 0..<40 where !cloudHand.state.online {
         try? await Task.sleep(nanoseconds: 250_000_000)
       }

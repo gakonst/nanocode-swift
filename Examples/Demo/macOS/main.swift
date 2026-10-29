@@ -5,7 +5,7 @@ import NanocodeKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let model = AppModel()
   var window: NSWindow?
-  var settings: NSWindow?
+  var controller: DemoController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = menu()
@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
     }
     let controller = DemoController(model: model)
-    controller.openSettings = { [weak self] in self?.showSettings() }
+    self.controller = controller
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -56,18 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
   @objc func showSettings() {
-    if let settings {
-      settings.makeKeyAndOrderFront(nil)
-      return
-    }
-    let window = NSWindow(contentViewController: SettingsController(model: model))
-    window.title = "Settings"
-    window.styleMask = [.titled, .closable, .resizable]
-    window.setContentSize(NSSize(width: 520, height: 640))
-    window.isReleasedWhenClosed = false
-    window.center()
-    window.makeKeyAndOrderFront(nil)
-    settings = window
+    window?.makeKeyAndOrderFront(nil)
+    controller?.showSettings()
   }
 
   @objc func newChat() { Task { await model.newChat() } }

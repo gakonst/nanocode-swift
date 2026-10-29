@@ -138,6 +138,13 @@ public final class InputNode: Node {
     #endif
   }
 
+  #if os(macOS)
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    guard !isHidden, let superview, frame.contains(point) else { return nil }
+    return scroll.hitTest(convert(point, from: superview)) ?? view
+  }
+  #endif
+
   public override func contentSize(_ width: CGFloat) -> CGSize {
     #if os(macOS)
     container.size = CGSize(width: max(1, width), height: unbounded)
@@ -402,6 +409,12 @@ public final class ComposerNode: Stack {
   }
 
   public func focus() { input.focus() }
+
+  #if os(macOS)
+  public override func mouseDown(with event: NSEvent) { input.focus() }
+  #else
+  public override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { input.focus() }
+  #endif
 
   func add(_ urls: [URL]) {
     attachments += Pending.load(urls)

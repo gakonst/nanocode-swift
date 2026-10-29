@@ -83,15 +83,11 @@ enum Access: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class AppModel {
-  static let instructions = """
-    You are the nanocode demo running natively inside an app on the user's \(AppModel.platform). \
-    Code Mode cells run in QuickJS on this device, and device tools (device_info, open_url, clipboard, speak) act on it. \
-    Keep answers short and show your work with tools when it helps.
-    """
-
   static let prompts = [
     "What device am I on? Use your tools.",
     "Write a JavaScript function that returns the first 20 primes, run it, and show the result.",
+    "Write a WebAssembly program in WAT that prints the first 10 Fibonacci numbers, assemble it with wat2wasm and run it.",
+    "Download python-3.12.0.wasm from vmware-labs/webassembly-language-runtimes on GitHub and run print(2**100) with it.",
     "Read me a haiku about agents running on phones.",
     "Search the web for today's top tech story and summarize it in two sentences.",
   ]
@@ -108,6 +104,7 @@ final class AppModel {
   let wallet: WalletMonitor
   let plans: PlanMonitor
   let hand: HandMonitor
+  let python: PythonHost
   var catalog: ModelCatalog?
   var conversations: [SessionSummary] = []
   var remotes: [RemoteConversation] = []
@@ -116,8 +113,12 @@ final class AppModel {
   var deviceHand = UserDefaults.standard.object(forKey: "deviceHand") as? Bool ?? true
   var cloudflareURL = UserDefaults.standard.string(forKey: "cloudflareURL") ?? "https://nanocode.xyz/cloudflare/"
   var vercelURL = UserDefaults.standard.string(forKey: "vercelURL") ?? "https://nanocode.xyz/vercel/api/chat"
-  var cloudflareToken = AppModel.secret("cloudflare")
-  var vercelToken = AppModel.secret("vercel")
+  var cloudflareToken = ""
+  var vercelToken = ""
+  @ObservationIgnored var tokensLoaded = false
+  @ObservationIgnored var keysLoaded = false
+  @ObservationIgnored var walletLoaded = false
+  @ObservationIgnored var plansLoaded = false
   let remoteStore: RemoteStore
   let cloudHand: HandMonitor
   @ObservationIgnored private var sessions: [String: RemoteSession] = [:]
@@ -129,12 +130,13 @@ final class AppModel {
   var thinking = "low"
   var access: Access = .tempo
   var paidTools = UserDefaults.standard.bool(forKey: "paidTools")
-  var anthropicKey = AppModel.secret("anthropic")
-  var openaiKey = AppModel.secret("openai")
+  var anthropicKey = ""
+  var openaiKey = ""
   var error: String?
   var opening = false
   var script: String?
   var machines: [String] = []
+  var folder: URL?
   let relay: HandRelay
   @ObservationIgnored private var watcher: Task<Void, Never>?
 
@@ -148,6 +150,7 @@ final class AppModel {
     hand = HandMonitor(runtime: runtime)
     plans = PlanMonitor(runtime: runtime, store: KeychainSubscriptionStore(service: "xyz.nanocode.demo.plans"))
     cloudHand = HandMonitor(runtime: runtime, id: "cloud")
+    python = PythonHost(runtime: runtime)
     do {
       remoteStore = try RemoteStore(directory: runtime.dataDirectory.appendingPathComponent("remote", isDirectory: true))
     } catch {
@@ -164,6 +167,69 @@ final class AppModel {
     if let saved = UserDefaults.standard.string(forKey: "NanocodeStyle").flatMap(Style.init(rawValue:)) { style = saved }
     provider = style.provider
     model = style.model
+    restoreFolder()
+    if access == .keys { loadKeys() }
+    if runner != .device { loadTokens() }
+  }
+
+  func loadKeys() {
+    guard !keysLoaded else { return }
+    keysLoaded = true
+    anthropicKey = Self.secret("anthropic")
+    openaiKey = Self.secret("openai")
+  }
+
+  func loadTokens() {
+    guard !tokensLoaded else { return }
+    tokensLoaded = true
+    cloudflareToken = Self.secret("cloudflare")
+    vercelToken = Self.secret("vercel")
+  }
+
+  func loadWallet() async {
+    guard !walletLoaded else { return }
+    walletLoaded = true
+    await wallet.restore()
+  }
+
+  func loadPlans() async {
+    guard !plansLoaded else { return }
+    plansLoaded = true
+    await plans.refresh()
+  }
+
+  func loadAccount() async {
+    loadKeys()
+    loadTokens()
+    await loadWallet()
+    await loadPlans()
+  }
+
+  func restoreFolder() {
+    if let data = UserDefaults.standard.data(forKey: "workspaceFolder") {
+      var stale = false
+      if let url = try? URL(resolvingBookmarkData: data, bookmarkDataIsStale: &stale) {
+        _ = url.startAccessingSecurityScopedResource()
+        folder = url
+        if stale, let fresh = try? url.bookmarkData() { UserDefaults.standard.set(fresh, forKey: "workspaceFolder") }
+      }
+    }
+    try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    DemoTools.workspace = workspace
+  }
+
+  func useFolder(_ url: URL?) async {
+    folder?.stopAccessingSecurityScopedResource()
+    if let url {
+      _ = url.startAccessingSecurityScopedResource()
+      if let bookmark = try? url.bookmarkData() { UserDefaults.standard.set(bookmark, forKey: "workspaceFolder") }
+    } else {
+      UserDefaults.standard.removeObject(forKey: "workspaceFolder")
+    }
+    folder = url
+    try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    DemoTools.workspace = workspace
+    if runner == .device, !chat.pending { await newChat() }
   }
 
   var visible: [Conversation] {
@@ -199,6 +265,7 @@ final class AppModel {
   func setRunner(_ runner: Runner) async {
     guard runner != self.runner else { return }
     self.runner = runner
+    if runner != .device { loadTokens() }
     UserDefaults.standard.set(runner.rawValue, forKey: "NanocodeRunner")
     model = models.contains { $0.id == model } ? model : models.first { $0.id == style.model }?.id ?? models.first?.id ?? style.model
     thinking = effort(model) ?? thinking
@@ -210,6 +277,7 @@ final class AppModel {
     UserDefaults.standard.set(cloudflareURL, forKey: "cloudflareURL")
     UserDefaults.standard.set(vercelURL, forKey: "vercelURL")
     UserDefaults.standard.set(deviceHand, forKey: "deviceHand")
+    guard tokensLoaded else { return }
     for (name, value) in [("cloudflare", cloudflareToken), ("vercel", vercelToken)] {
       if value.isEmpty { Keychain.remove(service: "xyz.nanocode.demo.keys", account: name) }
       else { try? Keychain.save(Data(value.utf8), service: "xyz.nanocode.demo.keys", account: name) }
@@ -234,14 +302,14 @@ final class AppModel {
     await newChat()
   }
 
-  var workspace: URL { runtime.dataDirectory.appendingPathComponent("workspace", isDirectory: true) }
+  var workspace: URL { folder ?? runtime.dataDirectory.appendingPathComponent("workspace", isDirectory: true) }
 
   static func secret(_ name: String) -> String {
     Keychain.load(service: "xyz.nanocode.demo.keys", account: name).map { String(decoding: $0, as: UTF8.self) } ?? ""
   }
 
   func saveKeys() {
-    for (name, value) in [("anthropic", anthropicKey), ("openai", openaiKey)] {
+    for (name, value) in [("anthropic", anthropicKey), ("openai", openaiKey)] where keysLoaded {
       if value.isEmpty { Keychain.remove(service: "xyz.nanocode.demo.keys", account: name) }
       else { try? Keychain.save(Data(value.utf8), service: "xyz.nanocode.demo.keys", account: name) }
     }
@@ -250,9 +318,10 @@ final class AppModel {
   }
 
   func start() async {
+    python.start()
     catalog = try? await runtime.models()
-    await wallet.restore()
-    await plans.refresh()
+    if access == .tempo { await loadWallet() }
+    if access == .plan { await loadPlans() }
     if UserDefaults.standard.string(forKey: "NanocodeWallet") == "cli" { await wallet.useTempoCLI() }
     if let provider = UserDefaults.standard.string(forKey: "NanocodeProvider").flatMap(Provider.init(rawValue:)),
        let model = UserDefaults.standard.string(forKey: "NanocodeModel") {
@@ -264,6 +333,23 @@ final class AppModel {
     await refresh()
     machines = await relay.hands()
     watch()
+    if let script = UserDefaults.standard.string(forKey: "NanocodeShell") {
+      let runtime = runtime
+      let directory = workspace
+      Task {
+        let started = Date()
+        do {
+          let result = try await runtime.runShell(script, in: directory)
+          print(result.stdout + result.stderr + "[shell] exit \(result.exitCode) in \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
+        } catch {
+          print("[shell] \(error.localizedDescription)")
+        }
+        fflush(stdout)
+      }
+    }
+    if let command = UserDefaults.standard.string(forKey: "NanocodeHand"), let parsed = HandConfiguration.parse(command: command) {
+      await hand.start(HandConfiguration(url: parsed.url, token: parsed.token, name: Self.handName, workspace: workspace, tools: DemoTools.all))
+    }
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
       if UserDefaults.standard.bool(forKey: "NanocodeType") { script = prompt } else { await chat.send(prompt) }
@@ -309,14 +395,13 @@ final class AppModel {
 
   func configuration(id: String, provider: Provider, model: String, thinking: String?) -> SessionConfiguration {
     var configuration = SessionConfiguration(
-      sessionID: id, provider: provider, model: model, thinking: thinking, instructions: Self.instructions,
+      sessionID: id, provider: provider, model: model, thinking: thinking,
       authentication: authentication(for: provider), workspace: workspace, tools: DemoTools.all,
       environment: SessionEnvironment(cwd: workspace.path))
     configuration.paidTools = paidTools && wallet.connected
     if !machines.isEmpty {
       configuration.hands = [relay.brain()]
       configuration.environment = nil
-      configuration.instructions = Self.instructions + " The user's computer \(machines.joined(separator: ", ")) is attached: commands and cells run there, not on this device."
     }
     return configuration
   }
@@ -392,6 +477,11 @@ final class AppModel {
   func setAccess(_ access: Access) async {
     guard access != self.access else { return }
     self.access = access
+    switch access {
+    case .keys: loadKeys()
+    case .tempo: await loadWallet()
+    case .plan: await loadPlans()
+    }
     saveKeys()
     if runner == .device, !chat.pending { await newChat() }
   }

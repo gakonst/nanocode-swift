@@ -68,6 +68,7 @@ public final class Transcript {
   private var orphans: [String: [ToolNode]] = [:]
   private var finished = Set<String>()
   private var seen: [UInt64: String] = [:]
+  private var prompted = Set<String>()
   private var received: [String: Int] = [:]
   private var counter = 0
 
@@ -128,6 +129,7 @@ public final class Transcript {
     orphans = [:]
     finished = []
     seen = [:]
+    prompted = []
     received = [:]
     held = []
     clock = 0
@@ -390,8 +392,10 @@ public final class Transcript {
         if event.type == "user" {
           let request = event.requestID ?? ""
           let kind = event["kind"]?.string ?? ""
-          if !request.hasPrefix("subagent-completion:"), kind == "prompt" || kind == "steer" || kind.isEmpty, !hidesPrompt(request) {
-            add(Entry(id: nextID(), kind: .user, text: event["text"]?.string ?? "", startedAt: event.at,
+          let text = event["text"]?.string ?? ""
+          if !request.hasPrefix("subagent-completion:"), kind == "prompt" || kind == "steer" || kind.isEmpty, !hidesPrompt(request),
+             request.isEmpty || prompted.insert(request + "\u{0}" + text).inserted {
+            add(Entry(id: nextID(), kind: .user, text: text, startedAt: event.at,
                       steer: kind == "steer", images: event["images"]?.array?.compactMap(\.string) ?? [], requestID: request))
           }
           apply(event)

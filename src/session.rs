@@ -33,7 +33,7 @@ use tokio::sync::Notify;
 use crate::{
     approvals::{Gate, Mode},
     bridge::Host,
-    config::{Configuration, Fork, Provider},
+    config::{Configuration, Fork, Provider, WorkspaceTools},
 };
 
 #[derive(Clone)]
@@ -181,6 +181,7 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
             &workspace,
             config.permission_mode.unwrap_or(Mode::FullAccess),
             config.observe_edits,
+            config.workspace_tools.resolved() == WorkspaceTools::All,
         )
     });
     if !config.allow.is_empty() {
@@ -213,7 +214,7 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         Provider::Codex => None,
     };
     if let Some(client) = &claude_client {
-        let mut tools = config.workspace_tools(Provider::Claude)?;
+        let mut tools = config.workspace_tools(Provider::Claude, &host.shell)?;
         if let Some(gate) = &gate {
             tools = gate.tools(tools, workspace.clone(), false)?;
         }
@@ -254,7 +255,7 @@ pub async fn open(host: &Arc<Host>, config: Configuration) -> Result<Value, Stri
         };
         let client =
             crate::config::codex_client(host, &config, codex_model, &host.payments).await?;
-        let mut tools = config.workspace_tools(Provider::Codex)?;
+        let mut tools = config.workspace_tools(Provider::Codex, &host.shell)?;
         if let Some(gate) = &gate {
             tools = gate.tools(tools, workspace.clone(), true)?;
         }

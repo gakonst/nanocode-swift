@@ -11,7 +11,7 @@ import UIKit
 enum DemoTools {
   static let speaker = AVSpeechSynthesizer()
 
-  static var all: [HostTool] { [device, openURL, clipboard, speak] }
+  static var all: [HostTool] { [device, openURL, clipboard, speak] + frameworks }
 
   static let device = HostTool(
     name: "device_info",

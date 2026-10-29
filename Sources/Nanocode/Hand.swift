@@ -76,7 +76,7 @@ public struct HandConfiguration: Sendable {
   public var token: String
   public var name: String?
   public var workspace: URL?
-  public var shell: Bool?
+  public var workspaceTools: WorkspaceTools
   public var tools: [HostTool]
   public var headers: [String: String]
   public var capabilities: [HandCapability]
@@ -84,14 +84,14 @@ public struct HandConfiguration: Sendable {
   public var environment: HandEnvironment?
 
   public init(id: String = "default", url: String, token: String, name: String? = nil, workspace: URL? = nil,
-              shell: Bool? = nil, tools: [HostTool] = [], headers: [String: String] = [:],
+              workspaceTools: WorkspaceTools = .all, tools: [HostTool] = [], headers: [String: String] = [:],
               capabilities: [HandCapability] = [], toolsOnly: Bool = false, environment: HandEnvironment? = nil) {
     self.id = id
     self.url = url
     self.token = token
     self.name = name
     self.workspace = workspace
-    self.shell = shell
+    self.workspaceTools = workspaceTools
     self.tools = tools
     self.headers = headers
     self.capabilities = capabilities
@@ -101,12 +101,11 @@ public struct HandConfiguration: Sendable {
 
   var json: JSON {
     var object: [String: JSON] = [
-      "id": .string(id), "url": .string(url), "token": .string(token),
+      "id": .string(id), "url": .string(url), "token": .string(token), "workspace_tools": .string(workspaceTools.rawValue),
       "tools": .array(tools.map(\.definition)), "headers": .object(headers.mapValues(JSON.string)),
     ]
     if let name { object["name"] = .string(name) }
     if let workspace { object["workspace"] = .string(workspace.path) }
-    if let shell { object["shell"] = .bool(shell) }
     if !capabilities.isEmpty { object["capabilities"] = .array(capabilities.map(\.spec)) }
     if toolsOnly { object["tools_only"] = .bool(true) }
     if let environment { object["environment"] = environment.json }
@@ -147,27 +146,27 @@ public struct RunnerConfiguration: Sendable {
   public var token: String
   public var machine: RunnerMachine?
   public var workspace: URL?
-  public var shell: Bool?
+  public var workspaceTools: WorkspaceTools
   public var tools: [HostTool]
 
   public init(id: String = "default", url: String, token: String, machine: RunnerMachine? = nil, workspace: URL? = nil,
-              shell: Bool? = nil, tools: [HostTool] = []) {
+              workspaceTools: WorkspaceTools = .all, tools: [HostTool] = []) {
     self.id = id
     self.url = url
     self.token = token
     self.machine = machine
     self.workspace = workspace
-    self.shell = shell
+    self.workspaceTools = workspaceTools
     self.tools = tools
   }
 
   var json: JSON {
     var object: [String: JSON] = [
-      "id": .string(id), "url": .string(url), "token": .string(token), "tools": .array(tools.map(\.definition)),
+      "id": .string(id), "url": .string(url), "token": .string(token), "workspace_tools": .string(workspaceTools.rawValue),
+      "tools": .array(tools.map(\.definition)),
     ]
     if let machine { object["machine"] = machine.json }
     if let workspace { object["workspace"] = .string(workspace.path) }
-    if let shell { object["shell"] = .bool(shell) }
     return .object(object)
   }
 }

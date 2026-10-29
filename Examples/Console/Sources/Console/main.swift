@@ -4,6 +4,17 @@ import Nanocode
 setbuf(stdout, nil)
 
 let arguments = CommandLine.arguments.dropFirst()
+let workspaceTools = ProcessInfo.processInfo.environment["NANOCODE_WORKSPACE_TOOLS"].flatMap(WorkspaceTools.init(rawValue:))
+if arguments.first == "bash" {
+  let runtime = try NanocodeRuntime(dataDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console", isDirectory: true))
+  let timeout = ProcessInfo.processInfo.environment["NANOCODE_TIMEOUT_MS"].flatMap(Double.init).map { $0 / 1000 }
+  let python = PythonHost(runtime: runtime)
+  python.start()
+  let result = try await runtime.runShell(arguments.dropFirst().joined(separator: " "), timeout: timeout)
+  print(result.stdout, terminator: "")
+  FileHandle.standardError.write(Data(result.stderr.utf8))
+  exit(Int32(result.exitCode))
+}
 if arguments.first == "wallet" {
   let runtime = try NanocodeRuntime(dataDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console-wallet", isDirectory: true))
   let events = runtime.events
@@ -33,10 +44,11 @@ if arguments.first == "hand" || arguments.first == "runner" {
     parameters: ["type": "object", "properties": [:], "additionalProperties": false]
   ) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
   if arguments.first == "hand" {
-    let status = try await runtime.startHand(HandConfiguration(url: values[0], token: values[1], name: values.count > 2 ? values[2] : "console", tools: [clock]))
+    let status = try await runtime.startHand(HandConfiguration(url: values[0], token: values[1], name: values.count > 2 ? values[2] : "console",
+                                                               workspaceTools: workspaceTools ?? .all, tools: [clock]))
     print("[hand] \(status?.directory ?? "")")
   } else {
-    print("[runner] \(try await runtime.startRunner(RunnerConfiguration(url: values[0], token: values[1], tools: [clock])).text())")
+    print("[runner] \(try await runtime.startRunner(RunnerConfiguration(url: values[0], token: values[1], workspaceTools: workspaceTools ?? .all, tools: [clock])).text())")
   }
   for await event in events {
     switch event {
@@ -194,6 +206,12 @@ let clock = HostTool(
 ) { _ in .text(Date().formatted(date: .complete, time: .complete)) }
 var configuration = SessionConfiguration(provider: provider, model: model, authentication: authentication, tools: [clock])
 configuration.paidTools = ProcessInfo.processInfo.environment["NANOCODE_PAID_TOOLS"] == "1"
+if let workspaceTools {
+  let workspace = directory.appendingPathComponent("workspace", isDirectory: true)
+  try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+  configuration.workspace = workspace
+  configuration.workspaceTools = workspaceTools
+}
 if let token = ProcessInfo.processInfo.environment["NANOCODE_RELAY_TOKEN"] {
   let relay = HandRelay(token: token)
   configuration.hands = [relay.brain()]

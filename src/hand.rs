@@ -14,7 +14,14 @@ use nanocode_tool_runtime::remote::{BusyKind, HandActivity};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{bridge::Host, files::NativeFiles, session::text, tools::HostTool};
+use crate::{
+    bridge::Host,
+    config::WorkspaceTools,
+    files::NativeFiles,
+    session::text,
+    shell::{Shell, Simulated},
+    tools::HostTool,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +34,7 @@ pub struct Start {
     #[serde(default)]
     pub workspace: Option<PathBuf>,
     #[serde(default)]
-    pub shell: Option<bool>,
+    pub workspace_tools: WorkspaceTools,
     #[serde(default)]
     pub tools: Vec<HostTool>,
     #[serde(default)]
@@ -71,30 +78,42 @@ impl Hands {
     }
 }
 
-fn merge(mut into: Tools, from: Tools) -> Result<Tools, String> {
-    for policy in from.code_mode_policies() {
-        into = into.with_code_mode_policy(policy);
+fn merge(parts: [Tools; 2]) -> Result<Tools, String> {
+    let mut merged = Tools::builder().without_defaults().build().map_err(text)?;
+    for part in parts {
+        for policy in part.code_mode_policies() {
+            merged = merged.with_code_mode_policy(policy);
+        }
+        for tool in part
+            .registered_tools()
+            .filter(|tool| tool.definition().name() != "update_plan")
+        {
+            merged = merged.add_shared_tool(Arc::clone(tool)).map_err(text)?;
+        }
     }
-    for tool in from.registered_tools() {
-        into = into.add_shared_tool(Arc::clone(tool)).map_err(text)?;
-    }
-    Ok(into)
+    Ok(merged)
 }
 
-fn file_tools(directory: &Path) -> Result<Tools, String> {
+pub fn workspace_tools(
+    directory: &Path,
+    selection: WorkspaceTools,
+    shell: &Arc<Shell>,
+) -> Result<Tools, String> {
+    let root = directory.to_path_buf();
     let files = Arc::new(NativeFiles);
-    let claude =
-        nanocode::claude::host_file_tools(directory.to_path_buf(), files.clone()).map_err(text)?;
-    let codex =
-        nanocode::codex_tools::host_file_tools(directory.to_path_buf(), files).map_err(text)?;
-    merge(claude, codex)
-}
-
-pub fn workspace_tools(directory: &Path, shell: Option<bool>) -> Result<Tools, String> {
-    if shell.unwrap_or(cfg!(target_os = "macos")) && cfg!(target_os = "macos") {
-        nanocode::hand::tools(directory.to_path_buf()).map_err(text)
-    } else {
-        file_tools(directory)
+    let simulated = Arc::new(Simulated(Arc::clone(shell)));
+    match selection.resolved() {
+        WorkspaceTools::All => nanocode::hand::tools(root).map_err(text),
+        WorkspaceTools::Simulated => merge([
+            nanocode::codex_tools::host_tools(root.clone(), files.clone(), simulated.clone())
+                .map_err(text)?,
+            nanocode::claude::host_tools(root, files, simulated).map_err(text)?,
+        ]),
+        WorkspaceTools::Files => merge([
+            nanocode::codex_tools::host_file_tools(root.clone(), files.clone()).map_err(text)?,
+            nanocode::claude::host_file_tools(root, files).map_err(text)?,
+        ]),
+        WorkspaceTools::None => Tools::builder().without_defaults().build().map_err(text),
     }
 }
 
@@ -125,7 +144,7 @@ pub async fn start(host: &Arc<Host>, start: Start) -> Result<Value, String> {
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let mut tools = workspace_tools(&directory, start.shell)?;
+    let mut tools = workspace_tools(&directory, start.workspace_tools, &host.shell)?;
     for tool in crate::tools::tools(host, start.tools) {
         tools = tools
             .add_shared_tool(Arc::new(tool) as Arc<dyn Tool>)

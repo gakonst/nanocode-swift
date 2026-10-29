@@ -1,6 +1,6 @@
 # nanocode-swift
 
-The [nanocode](https://nanocode.xyz) agent SDK on Apple platforms: Claude and Codex agents that run natively inside a macOS or iOS app, with durable sessions in a local SQLite file, Code Mode cells in an embedded QuickJS, device tools, hands and runners, and models and tools paid per request from a Tempo Wallet over MPP. It is the Swift sibling of [nanocode-ts](https://github.com/gakonst/nanocode-ts): the same SDK, compiled into a static library instead of WebAssembly, with its UI written in AppKit and UIKit.
+The [nanocode](https://nanocode.xyz) agent SDK on Apple platforms: Claude and Codex agents that run natively inside a macOS or iOS app, with durable sessions in a local SQLite file, Code Mode cells in an embedded QuickJS, the SDK's workspace tools (on iOS, where apps cannot start processes, over [nanocode-ts](https://github.com/gakonst/nanocode-ts)'s simulated bash on the app's real files, with WebAssembly and WASI programs on an embedded wasmi, and Python with pip, numpy, pandas and matplotlib on Pyodide in a hidden web view), device tools, hands and runners, and models and tools paid per request from a Tempo Wallet over MPP. It is the Swift sibling of [nanocode-ts](https://github.com/gakonst/nanocode-ts): the same SDK, compiled into a static library instead of WebAssembly, with its UI written in AppKit and UIKit.
 
 <table>
   <tr>
@@ -75,7 +75,7 @@ With no API key configured, sessions pay through the connected Tempo Wallet (`Wa
 
 ## Examples
 
-- `Examples/Demo` is the nanocode.xyz demo: an AppKit app for macOS and a UIKit app for iOS, in the ChatGPT or Claude style, with conversations from the store, the model menu, a Tempo Wallet, device tools (`device_info`, `open_url`, `clipboard`, `speak`), a computer attached through the relay and this device as a hand. Run `xcodegen generate` in it and open `NanocodeDemo.xcodeproj`.
+- `Examples/Demo` is the nanocode.xyz demo: an AppKit app for macOS and a UIKit app for iOS, in the ChatGPT or Claude style, with conversations from the store, the model menu, a Tempo Wallet, device tools (`device_info`, `open_url`, `clipboard`, `speak`, and with the user's permission photos, contacts, calendar, reminders, location, notifications, the microphone, Bluetooth, messages and email drafts, Shortcuts, and on iOS the camera, motion and music), a workspace folder chosen from Finder or the Files app, a computer attached through the relay and this device as a hand. Run `xcodegen generate` in it and open `NanocodeDemo.xcodeproj`.
 - `Examples/Demo/AppKit` and `Examples/Demo/UIKit` are the smallest hosts: an `NSWindow` and a `UINavigationController` around `NanocodeChatViewController`.
 - `Examples/Console` is a terminal client: `Console remote cloudflare|vercel [prompts…]` chats with a deployment and reopens the conversation from its journal, `Console remote-resume [id]` follows a turn a killed process left running, and `Console hand <url> <token>` makes the process a hand.
 

@@ -13,7 +13,7 @@ use nanocode_tool_runtime::attachment::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{bridge::Host, session::text, tools::HostTool};
+use crate::{bridge::Host, config::WorkspaceTools, session::text, tools::HostTool};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +37,7 @@ pub struct Start {
     #[serde(default)]
     pub workspace: Option<PathBuf>,
     #[serde(default)]
-    pub shell: Option<bool>,
+    pub workspace_tools: WorkspaceTools,
     #[serde(default)]
     pub tools: Vec<HostTool>,
 }
@@ -98,7 +98,7 @@ pub async fn start(host: &Arc<Host>, start: Start) -> Result<Value, String> {
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let mut tools = crate::hand::workspace_tools(&directory, start.shell)?;
+    let mut tools = crate::hand::workspace_tools(&directory, start.workspace_tools, &host.shell)?;
     for tool in crate::tools::tools(host, start.tools) {
         tools = tools
             .add_shared_tool(Arc::new(tool) as Arc<dyn Tool>)

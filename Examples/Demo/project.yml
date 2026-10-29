@@ -11,10 +11,11 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "4"
     GENERATE_INFOPLIST_FILE: YES
     CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: C3Q4NN5ZQ8
     DEAD_CODE_STRIPPING: YES
 targets:
   NanocodeDemo-macOS:
@@ -33,7 +34,17 @@ targets:
         PRODUCT_MODULE_NAME: NanocodeDemo
         INFOPLIST_KEY_CFBundleDisplayName: Nanocode
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        CODE_SIGN_IDENTITY: "-"
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: The agent can find, view and save your photos when you ask it to, and you can attach photos to a message.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: The agent can save images to your photo library when you ask it to.
+        INFOPLIST_KEY_NSContactsUsageDescription: The agent can search, add and export your contacts when you ask it to.
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: The agent can read your schedule and add events when you ask it to.
+        INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: The agent can read, add and complete your reminders when you ask it to.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: The agent can find where you are and search places nearby when you ask it to.
+        INFOPLIST_KEY_NSLocationUsageDescription: The agent can find where you are and search places nearby when you ask it to.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: The agent can record and transcribe what you say when you ask it to listen.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Recordings become text, on this device when it can.
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: The agent can list Bluetooth devices near you when you ask it to.
+        CODE_SIGN_IDENTITY: Apple Development
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_ENTITLEMENTS: macOS/Nanocode.entitlements
   NanocodeDemo-iOS:
@@ -53,7 +64,18 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Nanocode
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Attach photos to a message.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: The agent can find, view and save your photos when you ask it to, and you can attach photos to a message.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: The agent can save images to your photo library when you ask it to.
+        INFOPLIST_KEY_NSContactsUsageDescription: The agent can search, add and export your contacts when you ask it to.
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: The agent can read your schedule and add events when you ask it to.
+        INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: The agent can read, add and complete your reminders when you ask it to.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: The agent can find where you are and search places nearby when you ask it to.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: The agent can record and transcribe what you say when you ask it to listen.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Recordings become text, on this device when it can.
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: The agent can list Bluetooth devices near you when you ask it to.
+        INFOPLIST_KEY_NSCameraUsageDescription: The agent can open the camera to take a photo or scan a document for you.
+        INFOPLIST_KEY_NSMotionUsageDescription: The agent can read your step count and activity when you ask it to.
+        INFOPLIST_KEY_NSAppleMusicUsageDescription: The agent can search and play music from your library when you ask it to.
         TARGETED_DEVICE_FAMILY: "1,2"
   NanocodeUIKit-iOS:
     type: application
@@ -82,7 +104,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo.appkit
         PRODUCT_NAME: NanocodeAppKit
-        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_IDENTITY: Apple Development
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_ENTITLEMENTS: macOS/Nanocode.entitlements
 schemes:

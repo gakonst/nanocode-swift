@@ -38,7 +38,7 @@ public enum Authentication: Sendable, Hashable {
 }
 
 public enum WorkspaceTools: String, Sendable {
-  case all, files, none
+  case all, simulated, files, none
 }
 
 public struct SessionEnvironment: Sendable {

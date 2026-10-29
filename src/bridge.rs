@@ -20,6 +20,7 @@ use crate::{
     payments::Payments,
     runner::Runners,
     session::{Sessions, Storage},
+    shell::Shell,
 };
 
 pub type Callback = unsafe extern "C" fn(context: *mut c_void, data: *const u8, length: usize);
@@ -61,6 +62,7 @@ pub struct Host {
     pub payments: Payments,
     pub rules: Atom<Vec<String>>,
     pub logins: Atom<HashMap<String, Arc<Slot<McpLogin>>>>,
+    pub shell: Arc<Shell>,
 }
 
 struct Forget<'a>(&'a Host, u64);
@@ -156,6 +158,10 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         outlet,
         calls: Atom::default(),
         next: AtomicU64::new(1),
+        shell: Arc::new(Shell::new(
+            start.data_dir.join("workspace"),
+            start.data_dir.join("shell"),
+        )),
         data_dir: start.data_dir,
         storage: OnceCell::new(),
         sessions: Sessions::default(),
@@ -166,6 +172,7 @@ fn start(start: Start, outlet: Outlet) -> Result<Handle, String> {
         logins: Atom::default(),
     });
     host.payments.attach(&host);
+    host.shell.attach(Arc::downgrade(&host));
     Ok(Handle { host, runtime })
 }
 
@@ -262,6 +269,7 @@ pub unsafe extern "C" fn nanocode_stop(handle: *mut Handle) {
         host.runners.stop_all().await;
         host.sessions.close_all().await;
     });
+    handle.host.shell.stop();
     handle
         .runtime
         .shutdown_timeout(std::time::Duration::from_secs(2));

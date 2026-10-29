@@ -60,10 +60,18 @@ pub struct Gate {
 }
 
 impl Gate {
-    pub fn new(host: &Arc<Host>, workspace: &Path, mode: Mode, observe: bool) -> Arc<Self> {
+    pub fn new(
+        host: &Arc<Host>,
+        workspace: &Path,
+        mode: Mode,
+        observe: bool,
+        sandboxed: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             host: Arc::downgrade(host),
-            sandbox: crate::sandbox::profiles(workspace),
+            sandbox: sandboxed
+                .then(|| crate::sandbox::profiles(workspace))
+                .flatten(),
             observe,
             workspace: std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_owned()),
             mode: Atom::new(mode),

@@ -14,6 +14,7 @@ mod plans;
 mod runner;
 mod sandbox;
 mod session;
+mod shell;
 mod tools;
 mod wallet;
 

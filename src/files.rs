@@ -1,13 +1,22 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nanocode_process_contracts::{FileHost, ProcessFuture};
 
 pub struct NativeFiles;
 
+pub fn local(path: &Path) -> PathBuf {
+    if cfg!(target_os = "ios")
+        && let Ok(rest) = path.strip_prefix("/tmp")
+    {
+        return std::env::temp_dir().join(rest);
+    }
+    path.to_path_buf()
+}
+
 impl FileHost for NativeFiles {
     fn read<'a>(&'a self, path: &'a Path) -> ProcessFuture<'a, Result<Option<String>, String>> {
         Box::pin(async move {
-            match tokio::fs::read(path).await {
+            match tokio::fs::read(local(path)).await {
                 Ok(bytes) => String::from_utf8(bytes)
                     .map(Some)
                     .map_err(|_| format!("{} is not UTF-8 text", path.display())),
@@ -27,7 +36,7 @@ impl FileHost for NativeFiles {
 
     fn remove<'a>(&'a self, path: &'a Path) -> ProcessFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            match tokio::fs::remove_file(path).await {
+            match tokio::fs::remove_file(local(path)).await {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 Err(error) => Err(format!("remove {}: {error}", path.display())),
@@ -40,7 +49,7 @@ impl FileHost for NativeFiles {
         path: &'a Path,
     ) -> ProcessFuture<'a, Result<Option<Vec<u8>>, String>> {
         Box::pin(async move {
-            match tokio::fs::read(path).await {
+            match tokio::fs::read(local(path)).await {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(error) => Err(format!("read {}: {error}", path.display())),
@@ -54,12 +63,13 @@ impl FileHost for NativeFiles {
         bytes: &'a [u8],
     ) -> ProcessFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            let path = local(path);
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
                     .map_err(|error| format!("create {}: {error}", parent.display()))?;
             }
-            tokio::fs::write(path, bytes)
+            tokio::fs::write(&path, bytes)
                 .await
                 .map_err(|error| format!("write {}: {error}", path.display()))
         })

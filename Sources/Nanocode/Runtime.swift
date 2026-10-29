@@ -158,6 +158,7 @@ final class Router: @unchecked Sendable {
     var approve: (@Sendable (ApprovalRequest) async -> ApprovalDecision)?
     var subscriptions: (any SubscriptionStore)?
     var willEdit: (@Sendable (_ sessionID: String, _ paths: [String]) async -> Void)?
+    var python: (@Sendable (String) async throws -> String)?
     var stopped = false
   }
 
@@ -288,6 +289,20 @@ final class Router: @unchecked Sendable {
       Task.detached { [weak self] in
         await willEdit?(body["session_id"]?.string ?? "", body["paths"]?.array?.compactMap(\.string) ?? [])
         self?.send(["command": ["reply": ["id": .number(Double(id)), "ok": .null]]])
+      }
+      return
+    }
+    if call["kind"]?.string == "python" {
+      let python = state.withLock { $0.python }
+      Task.detached { [weak self] in
+        let reply: JSON
+        do {
+          guard let python else { throw NanocodeError("this app runs no Python") }
+          reply = ["id": .number(Double(id)), "ok": .string(try await python(body["request"]?.string ?? "{}"))]
+        } catch {
+          reply = ["id": .number(Double(id)), "error": .string(error.localizedDescription)]
+        }
+        self?.send(["command": ["reply": reply]])
       }
       return
     }
@@ -430,6 +445,10 @@ public final class NanocodeRuntime: @unchecked Sendable {
     router.state.withLock { $0.willEdit = willEdit }
   }
 
+  public func setPythonHost(_ run: @escaping @Sendable (_ request: String) async throws -> String) {
+    router.state.withLock { $0.python = run }
+  }
+
   public var events: AsyncStream<RuntimeEvent> { router.subscribe() }
 
   public func events(session id: String) -> AsyncStream<SessionEvent> { router.subscribe(session: id) }
@@ -446,5 +465,27 @@ public final class NanocodeRuntime: @unchecked Sendable {
     register(configuration.tools)
     let summary = try await command("open", configuration.json)
     return Session(id: summary["session_id"]?.string ?? configuration.sessionID, model: summary["model"]?.string ?? "", runtime: self)
+  }
+
+  public func runShell(_ script: String, in directory: URL? = nil, stdin: String? = nil, timeout: TimeInterval? = nil) async throws -> ShellResult {
+    var body: [String: JSON] = ["script": .string(script)]
+    if let directory { body["cwd"] = .string(directory.path) }
+    if let stdin { body["stdin"] = .string(stdin) }
+    if let timeout { body["timeout_ms"] = .number((timeout * 1000).rounded()) }
+    return ShellResult(try await command("shell_run", .object(body)))
+  }
+}
+
+public struct ShellResult: Sendable, Hashable {
+  public let stdout: String
+  public let stderr: String
+  public let exitCode: Int
+  public let truncated: Bool
+
+  init(_ json: JSON) {
+    stdout = json["stdout"]?.string ?? ""
+    stderr = json["stderr"]?.string ?? ""
+    exitCode = json["exit_code"]?.int ?? 0
+    truncated = json["truncated"]?.bool ?? false
   }
 }

@@ -28,11 +28,13 @@ let package = Package(
     .target(
       name: "Nanocode",
       dependencies: ["NanocodeCore", "NanocodeFFI"],
+      resources: [.copy("Resources/python.js"), .copy("Resources/pyodide-host.js")],
       linkerSettings: [
         .linkedFramework("Security"),
         .linkedFramework("SystemConfiguration"),
         .linkedFramework("CoreFoundation"),
         .linkedLibrary("resolv"),
+        .linkedFramework("WebKit"),
       ]
     ),
     .target(name: "NanocodeKit", dependencies: ["NanocodeCore", "Nanocode"]),

@@ -9,7 +9,11 @@ use nanocode::{
 };
 use serde::Deserialize;
 
-use crate::{files::NativeFiles, payments::Service};
+use crate::{
+    files::NativeFiles,
+    payments::Service,
+    shell::{Shell, Simulated},
+};
 
 pub const ANTHROPIC_API: &str = "https://api.anthropic.com/v1";
 pub const OPENAI_API: &str = "https://api.openai.com/v1";
@@ -48,8 +52,19 @@ pub enum Auth {
 pub enum WorkspaceTools {
     #[default]
     All,
+    Simulated,
     Files,
     None,
+}
+
+impl WorkspaceTools {
+    pub fn resolved(self) -> Self {
+        if cfg!(target_os = "ios") && self == Self::All {
+            Self::Simulated
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -263,15 +278,11 @@ impl Configuration {
             .map(|path| path.to_string_lossy().into_owned())
     }
 
-    pub fn workspace_tools(&self, family: Provider) -> Result<Tools, String> {
+    pub fn workspace_tools(&self, family: Provider, shell: &Arc<Shell>) -> Result<Tools, String> {
         let workspace = self.workspace.clone();
-        let selection = if cfg!(target_os = "ios") && self.workspace_tools == WorkspaceTools::All {
-            WorkspaceTools::Files
-        } else {
-            self.workspace_tools
-        };
         let files = Arc::new(NativeFiles);
-        let tools = match (workspace, selection, family) {
+        let simulated = || Arc::new(Simulated(Arc::clone(shell)));
+        let tools = match (workspace, self.workspace_tools.resolved(), family) {
             (Some(root), WorkspaceTools::All, Provider::Claude) => {
                 return nanocode::claude::runner_tools(root).map_err(|error| error.to_string());
             }
@@ -279,6 +290,12 @@ impl Configuration {
                 .web_search(false)
                 .image_generation(false)
                 .build(),
+            (Some(root), WorkspaceTools::Simulated, Provider::Claude) => {
+                nanocode::claude::host_tools(root, files, simulated())
+            }
+            (Some(root), WorkspaceTools::Simulated, Provider::Codex) => {
+                nanocode::codex_tools::host_tools(root, files, simulated())
+            }
             (Some(root), WorkspaceTools::Files, Provider::Claude) => {
                 nanocode::claude::host_file_tools(root, files)
             }

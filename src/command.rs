@@ -139,6 +139,15 @@ pub enum Command {
         id: String,
     },
     RunnerStatus {},
+    ShellRun {
+        script: String,
+        #[serde(default)]
+        cwd: Option<std::path::PathBuf>,
+        #[serde(default)]
+        stdin: Option<String>,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+    },
     WalletConnect(wallet::Meta),
     WalletUse(wallet::Record),
     WalletCli {},
@@ -278,6 +287,18 @@ pub async fn execute(host: &Arc<Host>, command: Command) -> Result<Value, String
         Command::RunnerStart(start) => runner::start(host, *start).await,
         Command::RunnerStop { id } => runner::stop(host, &id).await,
         Command::RunnerStatus {} => Ok(runner::statuses(host)),
+        Command::ShellRun {
+            script,
+            cwd,
+            stdin,
+            timeout_ms,
+        } => {
+            let ran = host
+                .shell
+                .run(&script, cwd.as_deref(), stdin.as_deref(), timeout_ms)
+                .await?;
+            serde_json::to_value(ran).map_err(session::text)
+        }
         Command::WalletConnect(meta) => wallet::connect(host, meta).await,
         Command::WalletUse(record) => wallet::install(&host.payments, &record),
         Command::WalletCli {} => wallet::install_cli(&host.payments),

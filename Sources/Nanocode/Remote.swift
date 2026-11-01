@@ -354,7 +354,8 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
       var body: [String: JSON] = ["request_id": .string(requestID), "prompt": .string(prompt), "steer": true,
                                   "provider": .string(record.provider.rawValue), "model": .string(record.model)]
       if let hand = record.hand { body["hand"] = .string(hand) }
-      let (data, response) = try await http.data(for: post(cloudflareURL("turns"), .object(body)))
+      let request = post(cloudflareURL("turns"), .object(body))
+      let (data, response) = try await retrying { try await self.http.data(for: request) }
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       if status == 409 { return false }
       guard (200..<300).contains(status) else { throw NanocodeError(failure(data, response)) }
@@ -382,8 +383,27 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
       guard let session = record.session else { return }
       request = post(server.url, ["kind": "cancel", "sessionId": .string(session)])
     }
-    let (data, response) = try await http.data(for: request)
+    let (data, response) = try await retrying { try await self.http.data(for: request) }
     guard ((response as? HTTPURLResponse)?.statusCode ?? 0) < 300 else { throw NanocodeError(failure(data, response)) }
+  }
+
+  private static let controlRetries = 2
+
+  private func retrying(_ send: () async throws -> (Data, URLResponse)) async throws -> (Data, URLResponse) {
+    var delay = 1.0
+    var attempt = 0
+    while true {
+      do {
+        let (data, response) = try await send()
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard attempt < Self.controlRetries, status == 408 || status == 429 || status >= 500 else { return (data, response) }
+        delay = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init) ?? delay
+      } catch let error as URLError where error.code != .cancelled && attempt < Self.controlRetries {
+      }
+      attempt += 1
+      try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+      delay *= 2
+    }
   }
 
   public func resume() async {

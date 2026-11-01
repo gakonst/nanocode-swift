@@ -219,8 +219,8 @@ extension DeviceKit {
   }
 }
 
-actor Geofences {
-  static let shared = Geofences()
+public actor Geofences {
+  public static let shared = Geofences()
   static let name = "personal.geofences"
   static let fencesKey = "PhoneGeofences"
   static let historyKey = "PhoneGeofenceEvents"
@@ -273,7 +273,7 @@ actor Geofences {
     return made
   }
 
-  func resume() async {
+  public func resume() async {
     guard !list().isEmpty else { return }
     _ = await opened()
     listen()

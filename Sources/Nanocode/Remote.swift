@@ -42,6 +42,24 @@ public struct RemoteConversation: Codable, Sendable, Hashable, Identifiable {
   public var cursor: String?
   public var open: String?
   public var hand: String?
+
+  public init(id: String, kind: RemoteKind, url: URL, provider: Provider, model: String, thinking: String? = nil,
+              title: String? = nil, createdAt: Date = Date(), updatedAt: Date = Date(), session: String? = nil,
+              cursor: String? = nil, open: String? = nil, hand: String? = nil) {
+    self.id = id
+    self.kind = kind
+    self.url = url
+    self.provider = provider
+    self.model = model
+    self.thinking = thinking
+    self.title = title
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.session = session
+    self.cursor = cursor
+    self.open = open
+    self.hand = hand
+  }
 }
 
 public final class RemoteStore: Sendable {
@@ -200,6 +218,7 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     var listeners: [UUID: AsyncStream<SessionEvent>.Continuation] = [:]
     var queue: [Queued] = []
     var running = false
+    var stopped: Set<String> = []
     var saved = Date.distantPast
   }
 
@@ -349,8 +368,11 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
   }
 
   public func stopTurn(_ requestID: String) async throws {
-    state.withLock { $0.queue.removeAll() }
     let open = record.open ?? requestID
+    state.withLock { state in
+      state.queue.removeAll()
+      state.stopped.insert(open)
+    }
     let request: URLRequest
     switch server.kind {
     case .cloudflare:
@@ -443,6 +465,7 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
   }
 
   private func finish(_ requestID: String, _ report: JSON) {
+    _ = state.withLock { $0.stopped.remove(requestID) }
     mutate(save: true) { record in
       if record.open == requestID { record.open = nil }
       record.updatedAt = Date()
@@ -510,11 +533,25 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     if !images.isEmpty { body["images"] = .array(images) }
     if let thinking = record.thinking { body["thinking"] = .string(thinking) }
     if let hand = record.hand { body["hand"] = .string(hand) }
-    let cursor = record.cursor ?? "0"
-    var request = post(URL(string: cloudflareURL("turns").absoluteString + "?live=1&after=\(cursor)")!, .object(body), stream: true)
-    request.timeoutInterval = 300
-    if let report = try await follow(request, next.requestID) { return report }
-    return await reconnect(next.requestID)
+    var delay = 1.0
+    while !Task.isCancelled, !state.withLock({ $0.stopped.contains(next.requestID) }) {
+      var request = post(URL(string: cloudflareURL("turns").absoluteString + "?live=1&after=\(record.cursor ?? "0")")!,
+                         .object(body), stream: true)
+      request.timeoutInterval = 300
+      do {
+        if let report = try await follow(request, next.requestID) { return report }
+        return await reconnect(next.requestID)
+      } catch let error as NanocodeError {
+        throw error
+      } catch let retry as Retry {
+        delay = retry.after ?? min(delay * 2, 15)
+      } catch {
+        delay = min(delay * 2, 15)
+      }
+      emit(.waiting(requestID: next.requestID, retryMs: delay * 1000))
+      try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+    }
+    return ["status": "cancelled"]
   }
 
   private func follow(_ request: URLRequest, _ requestID: String) async throws -> JSON? {

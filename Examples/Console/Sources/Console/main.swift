@@ -139,8 +139,14 @@ if arguments.first == "remote" {
     print("usage: Console remote cloudflare|vercel [prompt] [follow-up]")
     exit(2)
   }
-  let server = kind == .cloudflare ? RemoteServer.cloudflare(token: ProcessInfo.processInfo.environment["NANOCODE_TOKEN"])
-    : RemoteServer.vercel(token: ProcessInfo.processInfo.environment["NANOCODE_TOKEN"])
+  let token = ProcessInfo.processInfo.environment["NANOCODE_TOKEN"]
+  let url = ProcessInfo.processInfo.environment["NANOCODE_REMOTE_URL"].flatMap(URL.init(string:))
+  let server = switch (kind, url) {
+  case (.cloudflare, let url?): RemoteServer.cloudflare(url, token: token)
+  case (.cloudflare, nil): RemoteServer.cloudflare(token: token)
+  case (.vercel, let url?): RemoteServer.vercel(url, token: token)
+  case (.vercel, nil): RemoteServer.vercel(token: token)
+  }
   let provider = Provider(rawValue: ProcessInfo.processInfo.environment["NANOCODE_PROVIDER"] ?? "claude") ?? .claude
   let model = ProcessInfo.processInfo.environment["NANOCODE_MODEL"] ?? (provider == .claude ? "claude-haiku-5-5" : "gpt-6-luna")
   let store = try RemoteStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("nanocode-console-remote", isDirectory: true))

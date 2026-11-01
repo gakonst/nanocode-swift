@@ -38,10 +38,11 @@ public enum HandState: Sendable, Hashable {
   case retrying(delayMs: Double)
   case stopped(error: String?)
 
-  init(_ event: JSON) {
+  init?(_ event: JSON) {
     switch event["state"]?.string {
-    case "connecting": self = .connecting
+    case "connecting", "listening": self = .connecting
     case "connected": self = .connected(endpoint: event["endpoint"]?.string ?? "")
+    case "brain_connected": self = .connected(endpoint: event["peer"]?.string ?? "")
     case "disconnected": self = .disconnected(reason: event["reason"]?.string ?? "")
     case "retrying": self = .retrying(delayMs: event["delay_ms"]?.number ?? 0)
     case "revoked": self = .stopped(error: "The brain revoked this hand.")
@@ -49,7 +50,7 @@ public enum HandState: Sendable, Hashable {
     case "rejected": self = .stopped(error: "The brain refused the hand (HTTP \(event["status"]?.int ?? 0)).")
     case "fenced": self = .stopped(error: "The brain fenced this runner: \(event["reason"]?.string ?? "")")
     case "catalog", "call_started", "call_completed": self = .connected(endpoint: "")
-    default: self = .idle
+    default: return nil
     }
   }
 
@@ -67,6 +68,13 @@ public enum HandState: Sendable, Hashable {
   public var online: Bool {
     if case .connected = self { return true }
     return false
+  }
+
+  public var running: Bool {
+    switch self {
+    case .idle, .stopped: false
+    case .connecting, .connected, .disconnected, .retrying: true
+    }
   }
 }
 

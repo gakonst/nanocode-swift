@@ -466,10 +466,7 @@ final class AppModel {
       await cloudHand.start(HandConfiguration(url: access.url.absoluteString, token: access.token, name: Self.handName,
                                               workspace: workspace, tools: DemoTools.all,
                                               capabilities: DemoTools.capabilities, environment: DemoTools.environment))
-      for _ in 0..<40 where !cloudHand.state.online {
-        try? await Task.sleep(nanoseconds: 250_000_000)
-      }
-      session.hand = cloudHand.state.online ? Self.handName : nil
+      session.hand = await cloudHand.online(within: .seconds(10)) ? Self.handName : nil
     } catch {
       session.hand = nil
       cloudHand.error = error.localizedDescription

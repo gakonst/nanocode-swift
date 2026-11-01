@@ -79,12 +79,14 @@ public final class WalletMonitor {
 public final class HandMonitor {
   public private(set) var state: HandState = .idle
   public private(set) var status: HandStatus?
-  public private(set) var running = false
   public var error: String?
   @ObservationIgnored private let runtime: NanocodeRuntime
   @ObservationIgnored private var listener: Task<Void, Never>?
   @ObservationIgnored private var poller: Task<Void, Never>?
+  @ObservationIgnored private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
   @ObservationIgnored public let id: String
+
+  public var running: Bool { state.running }
 
   public init(runtime: NanocodeRuntime, id: String = "default") {
     self.runtime = runtime
@@ -95,17 +97,14 @@ public final class HandMonitor {
         guard let self else { return }
         switch event {
         case .hand(let hand, let event) where hand == self.id:
-          self.state = HandState(event)
+          if let next = HandState(event) { self.move(next) }
         case .handStopped(let hand, let error) where hand == self.id:
-          self.running = false
-          self.state = .stopped(error: error)
+          self.move(.stopped(error: error))
           self.poller?.cancel()
         case .runner(let runner, let event) where runner == self.id:
-          let next = HandState(event)
-          if next != .idle { self.state = next }
+          if let next = HandState(event) { self.move(next) }
         case .runnerStopped(let runner, let error) where runner == self.id:
-          self.running = false
-          self.state = .stopped(error: error)
+          self.move(.stopped(error: error))
         default: break
         }
       }
@@ -118,8 +117,7 @@ public final class HandMonitor {
     error = nil
     do {
       status = try await runtime.startHand(configuration)
-      running = true
-      state = .connecting
+      move(.connecting)
       poll()
     } catch {
       self.error = error.localizedDescription
@@ -132,8 +130,7 @@ public final class HandMonitor {
     error = nil
     do {
       _ = try await runtime.startRunner(configuration)
-      running = true
-      state = .connecting
+      move(.connecting)
     } catch {
       self.error = error.localizedDescription
     }
@@ -143,9 +140,28 @@ public final class HandMonitor {
     poller?.cancel()
     try? await runtime.stopRunner(id)
     try? await runtime.stopHand(id)
-    running = false
-    state = .idle
+    move(.idle)
     status = nil
+  }
+
+  public func online(within timeout: Duration) async -> Bool {
+    if state.online { return true }
+    guard state.running else { return false }
+    let key = UUID()
+    let timer = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: timeout)
+      self?.waiters.removeValue(forKey: key)?.resume(returning: false)
+    }
+    defer { timer.cancel() }
+    return await withCheckedContinuation { waiters[key] = $0 }
+  }
+
+  private func move(_ next: HandState) {
+    state = next
+    guard next.online || !next.running else { return }
+    let waiting = waiters
+    waiters = [:]
+    for waiter in waiting.values { waiter.resume(returning: next.online) }
   }
 
   private func poll() {

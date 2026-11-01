@@ -20,6 +20,7 @@ let package = Package(
     .library(name: "NanocodeViews", targets: ["NanocodeViews"]),
     .library(name: "Nanocode", targets: ["Nanocode"]),
     .library(name: "NanocodeKit", targets: ["NanocodeKit"]),
+    .library(name: "NanocodeDevice", targets: ["NanocodeDevice"]),
   ],
   targets: [
     ffi,
@@ -38,5 +39,6 @@ let package = Package(
       ]
     ),
     .target(name: "NanocodeKit", dependencies: ["NanocodeCore", "Nanocode"]),
+    .target(name: "NanocodeDevice", dependencies: ["Nanocode"]),
   ]
 )

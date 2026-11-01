@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import CoreLocation
 import Foundation
 import MapKit
@@ -12,7 +12,7 @@ extension DeviceKit {
   static let locationProperties: [String: JSON] = [
     "query": prop("string", "For search: what to look for (coffee, a pharmacy, a business). For geocode: an address or place. For directions: where to go."),
     "latitude": prop("number"), "longitude": prop("number"),
-    "near_latitude": prop("number", "For search: search around here instead of the iPhone."),
+    "near_latitude": prop("number", "For search: search around here instead of the \(DeviceTools.here)."),
     "near_longitude": prop("number"),
     "radius_km": prop("number", "For search: how far around, 5 by default."),
     "transport": choice(["automobile", "walking", "transit", "cycling"], "For directions: automobile by default."),
@@ -21,7 +21,7 @@ extension DeviceKit {
 
   static let location = HostTool(
     name: "location",
-    description: "Where this iPhone is and places around it, from Apple Maps. current: coordinates, accuracy, altitude, speed and the address. search: places matching a query near the iPhone or a point. geocode: an address or place to coordinates. reverse: coordinates to an address. directions: distance and travel time from the iPhone to a place or coordinates (latitude/longitude), with the steps.",
+    description: "Where this \(DeviceTools.here) is and places around it, from Apple Maps. current: coordinates, accuracy, altitude, speed and the address. search: places matching a query near the \(DeviceTools.here) or a point. geocode: an address or place to coordinates. reverse: coordinates to an address. directions: distance and travel time from the \(DeviceTools.here) to a place or coordinates (latitude/longitude), with the steps.",
     parameters: schema(locationActions, locationProperties)
   ) { call in try await whereabouts(call.input) }
 
@@ -39,7 +39,7 @@ extension DeviceKit {
 
   static let geofence = HostTool(
     name: "geofence",
-    description: "Geofences that notify the owner on this iPhone when they arrive at or leave a place, even when \(DeviceTools.settings.app) is closed (iOS relaunches it). add, list, remove, and events (what happened, newest first). iOS allows 20 geofences per app; it needs location access always (capability location_always).",
+    description: "Geofences that notify the owner on this \(DeviceTools.here) when they arrive at or leave a place, even when \(DeviceTools.settings.app) is closed (iOS relaunches it). add, list, remove, and events (what happened, newest first). iOS allows 20 geofences per app; it needs location access always (capability location_always).",
     parameters: schema(geofenceActions, geofenceProperties)
   ) { call in try await fences(call.input) }
 
@@ -92,7 +92,7 @@ extension DeviceKit {
   }
 
   static func address(_ location: CLLocation) async -> String? {
-    if #available(iOS 26.0, *) {
+    if #available(iOS 26.0, macOS 26.0, *) {
       guard let request = MKReverseGeocodingRequest(location: location), let item = try? await request.mapItems.first else { return nil }
       return item.address?.fullAddress ?? item.name
     }
@@ -102,17 +102,17 @@ extension DeviceKit {
   }
 
   static func location(of item: MKMapItem) -> CLLocation {
-    if #available(iOS 26.0, *) { return item.location }
+    if #available(iOS 26.0, macOS 26.0, *) { return item.location }
     return item.placemark.location ?? CLLocation(latitude: item.placemark.coordinate.latitude, longitude: item.placemark.coordinate.longitude)
   }
 
   static func fullAddress(of item: MKMapItem) -> String? {
-    if #available(iOS 26.0, *) { return item.address?.fullAddress }
+    if #available(iOS 26.0, macOS 26.0, *) { return item.address?.fullAddress }
     return item.placemark.title
   }
 
   static func item(at location: CLLocation) -> MKMapItem {
-    if #available(iOS 26.0, *) { return MKMapItem(location: location, address: nil) }
+    if #available(iOS 26.0, macOS 26.0, *) { return MKMapItem(location: location, address: nil) }
     return MKMapItem(placemark: MKPlacemark(coordinate: location.coordinate))
   }
 

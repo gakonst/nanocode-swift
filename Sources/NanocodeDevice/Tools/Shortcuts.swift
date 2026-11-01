@@ -1,7 +1,11 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Foundation
 import Nanocode
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor public enum ShortcutCallbacks {
   static var waiting: [String: CheckedContinuation<(status: String, result: String?), Never>] = [:]
@@ -32,7 +36,7 @@ extension DeviceKit {
 
   static let shortcut = HostTool(
     name: "shortcut",
-    description: "Runs one of the owner's Shortcuts by name on this iPhone, with optional text input, and waits for its result: Shortcuts runs it and comes back to \(DeviceTools.settings.app) with the shortcut's output (x-callback-url). With wait false it only starts it. open opens the Shortcuts app (to a shortcut's editor when named). It needs \(DeviceTools.settings.app) open, since iOS opens the Shortcuts app to run it.",
+    description: "Runs one of the owner's Shortcuts by name on this \(DeviceTools.here), with optional text input, and waits for its result: Shortcuts runs it and comes back to \(DeviceTools.settings.app) with the shortcut's output (x-callback-url). With wait false it only starts it. open opens the Shortcuts app (to a shortcut's editor when named). It needs \(DeviceTools.settings.app) open, since iOS opens the Shortcuts app to run it.",
     parameters: DeviceTools.schema([
       "action": DeviceTools.actions(shortcutActions),
       "name": prop("string", "The shortcut's name, exactly as in Shortcuts."),
@@ -64,7 +68,11 @@ extension DeviceKit {
     }
     let seconds = input["seconds"]?.number ?? 120
     guard seconds > 0 else { throw NanocodeError("seconds must be positive") }
+    #if os(iOS)
     let opened = await MainActor.run { UIApplication.shared.canOpenURL(url) }
+    #else
+    let opened = NSWorkspace.shared.urlForApplication(toOpen: url) != nil
+    #endif
     guard opened else { throw NanocodeError("the Shortcuts app is not installed") }
     guard wait else {
       await DeviceTools.open(url)

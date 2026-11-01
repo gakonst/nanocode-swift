@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Foundation
 import Intents
 import Nanocode
@@ -25,7 +25,7 @@ extension DeviceKit {
 
   static let notification = HostTool(
     name: "notification",
-    description: "Local notifications on this iPhone. schedule: now, after seconds, at a date, or repeating. pending: scheduled ones not shown yet. delivered: ones in Notification Center. cancel, cancel_all (pending), clear, clear_all (delivered), badge (the app icon number), settings (what the owner allowed).",
+    description: "Local notifications on this \(DeviceTools.here). schedule: now, after seconds, at a date, or repeating. pending: scheduled ones not shown yet. delivered: ones in Notification Center. cancel, cancel_all (pending), clear, clear_all (delivered), badge (the app icon number), settings (what the owner allowed).",
     parameters: schema(notificationActions, notificationProperties)
   ) { call in try await remind(call.input) }
 
@@ -151,7 +151,7 @@ extension DeviceKit {
 
   static let focus = HostTool(
     name: "focus",
-    description: "Whether the owner has a Focus on (Do Not Disturb, Sleep, Work…) on this iPhone right now. iOS shares only on or off, not which Focus.",
+    description: "Whether the owner has a Focus on (Do Not Disturb, Sleep, Work…) on this \(DeviceTools.here) right now. iOS shares only on or off, not which Focus.",
     parameters: DeviceTools.schema([:])
   ) { _ in
     try await DeviceTools.gate("focus")

@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreLocation
@@ -7,7 +7,11 @@ import ImageIO
 import MapKit
 import Nanocode
 import Photos
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import UniformTypeIdentifiers
 import Vision
 
@@ -18,7 +22,7 @@ extension DeviceKit {
 
   static let photoLibrary = HostTool(
     name: "photo_library",
-    description: "The whole photo library on this iPhone, beyond photos' list and view. search: photos and videos by date, media, favorites, album, place (a place name, or latitude/longitude with radius_km), faces (at least this many people in it) and text in the picture (read on this iPhone with Vision and remembered, so later searches are instant; scan says how many unread photos to read this time, and unscanned/next_before continue). albums: every album (yours, shared and smart). album_create, album_add, album_remove, album_delete manage albums. save: add an image or video from a file, base64 or a URL (optionally into an album). favorite and hide mark photos. delete: move photos to Recently Deleted (iOS asks the owner). edit: rotate, crop, filter or auto-enhance a photo as a new version (revert undoes it). index: how many photos have their text read. Ids come from photos list or search.",
+    description: "The whole photo library on this \(DeviceTools.here), beyond photos' list and view. search: photos and videos by date, media, favorites, album, place (a place name, or latitude/longitude with radius_km), faces (at least this many people in it) and text in the picture (read on this \(DeviceTools.here) with Vision and remembered, so later searches are instant; scan says how many unread photos to read this time, and unscanned/next_before continue). albums: every album (yours, shared and smart). album_create, album_add, album_remove, album_delete manage albums. save: add an image or video from a file, base64 or a URL (optionally into an album). favorite and hide mark photos. delete: move photos to Recently Deleted (iOS asks the owner). edit: rotate, crop, filter or auto-enhance a photo as a new version (revert undoes it). index: how many photos have their text read. Ids come from photos list or search.",
     parameters: schema(photoActions, [
       "text": prop("string", "For search: words that appear in the picture (signs, receipts, documents, screenshots)."),
       "place": prop("string", "For search: a place name, such as Lisbon or the Acropolis."),
@@ -412,7 +416,7 @@ actor PhotoIndex {
       options.deliveryMode = .highQualityFormat
       options.resizeMode = .fast
       PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: side, height: side), contentMode: .aspectFit, options: options) { image, _ in
-        continuation.resume(returning: image?.cgImage)
+        continuation.resume(returning: image.flatMap(DeviceTools.cgImage))
       }
     }
     guard let image else { return nil }

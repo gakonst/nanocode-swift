@@ -1,10 +1,15 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Foundation
 import Nanocode
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 enum DeviceKit {
   static var tools: [HostTool] {
+    #if os(iOS)
     var list = [device, clipboard, screen, shortcut, files, speech, contacts, calendar, reminders, location, geofence, notification, motion, music,
                 bluetooth, localNetwork, photoLibrary, wallet]
     if Entitlements.focus { list.append(focus) }
@@ -12,6 +17,12 @@ enum DeviceKit {
     if Entitlements.home { list.append(home) }
     if Entitlements.nfc { list.append(nfc) }
     return list
+    #else
+    var list = [device, clipboard, shortcut, files, speech, contacts, calendar, reminders, location, geofence, notification, bluetooth, localNetwork,
+                photoLibrary]
+    if Entitlements.focus { list.append(focus) }
+    return list
+    #endif
   }
 
   static func text(_ input: JSON, _ key: String) -> String? {
@@ -54,11 +65,15 @@ enum DeviceKit {
             "next_offset": offset + limit < items.count ? .number(Double(offset + limit)) : .null]
   }
 
+  #if os(iOS)
   @MainActor static var active: Bool { UIApplication.shared.applicationState == .active }
+  #else
+  @MainActor static var active: Bool { NSApp.isActive || NSApp.windows.contains(where: \.isVisible) }
+  #endif
 
   static func foreground(_ what: String) async throws {
     guard await MainActor.run(body: { active }) else {
-      throw NanocodeError("\(what) needs \(DeviceTools.settings.app) open on the iPhone; ask the owner to open it, then try again")
+      throw NanocodeError("\(what) needs \(DeviceTools.settings.app) open on the \(DeviceTools.here); ask the owner to open it, then try again")
     }
   }
 
@@ -93,7 +108,7 @@ enum DeviceKit {
   }
 
   static let when: JSON = .object(["type": .array([.string("string"), .string("number")]),
-                                    "description": "ISO 8601 date or date-time (the iPhone's time zone unless it has an offset), or milliseconds since 1970."])
+                                    "description": .string("ISO 8601 date or date-time (the \(DeviceTools.here)'s time zone unless it has an offset), or milliseconds since 1970.")])
 
   static let pageProperties: [String: JSON] = [
     "limit": prop("integer", "How many to return."),

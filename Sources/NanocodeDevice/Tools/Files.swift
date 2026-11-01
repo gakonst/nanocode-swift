@@ -1,7 +1,11 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Foundation
 import Nanocode
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import UniformTypeIdentifiers
 
 extension DeviceKit {
@@ -28,7 +32,7 @@ extension DeviceKit {
 
   static let files = HostTool(
     name: "files",
-    description: "Files on this iPhone. \(DeviceTools.settings.app)'s own containers (documents, library, caches, tmp, group, picked): containers, list, info, read (text, base64 or an image, paged by byte offset), write, delete, move, copy, mkdir. pick: the owner picks files from the Files app (iCloud Drive, other apps, servers); copies land in the picked container. export: save one of \(DeviceTools.settings.app)'s files where the owner chooses in Files. share: the share sheet for a file. pick, export and share need \(DeviceTools.settings.app) open.",
+    description: "Files on this \(DeviceTools.here). \(DeviceTools.settings.app)'s own containers (documents, library, caches, tmp, group, picked): containers, list, info, read (text, base64 or an image, paged by byte offset), write, delete, move, copy, mkdir. pick: the owner picks files from the Files app (iCloud Drive, other apps, servers); copies land in the picked container. export: save one of \(DeviceTools.settings.app)'s files where the owner chooses in Files. share: the share sheet for a file. pick, export and share need \(DeviceTools.settings.app) open.",
     parameters: schema(fileActions, fileProperties),
     content: true
   ) { call in try await fileSystem(call.input) }
@@ -114,7 +118,7 @@ extension DeviceKit {
       let offset = max(input["offset"]?.int ?? 0, 0)
       let length = input["length"]?.int ?? readBytes
       guard length >= 1, length <= mostReadBytes else {
-        throw NanocodeError("length is 1 to \(mostReadBytes) bytes: one answer from this iPhone carries at most 8 MiB (the session's REMOTE_MAX_FRAME_BYTES) and base64 grows bytes by a third; page with offset")
+        throw NanocodeError("length is 1 to \(mostReadBytes) bytes: one answer from this \(DeviceTools.here) carries at most 8 MiB (the session's REMOTE_MAX_FRAME_BYTES) and base64 grows bytes by a third; page with offset")
       }
       try handle.seek(toOffset: UInt64(min(offset, total)))
       let bytes = try handle.read(upToCount: length) ?? Data()
@@ -214,6 +218,34 @@ extension DeviceKit {
     }
   }
 
+  #if os(macOS)
+  @MainActor static func pick(_ types: [UTType], multiple: Bool) async throws -> [URL] {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = types
+    panel.allowsMultipleSelection = multiple
+    panel.canChooseDirectories = false
+    NSApp.activate()
+    return panel.runModal() == .OK ? panel.urls : []
+  }
+
+  @MainActor static func export(_ url: URL) async throws -> Bool {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = url.lastPathComponent
+    NSApp.activate()
+    guard panel.runModal() == .OK, let target = panel.url else { return false }
+    if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+    try FileManager.default.copyItem(at: url, to: target)
+    return true
+  }
+
+  @MainActor static func share(_ items: [Any]) async throws -> String {
+    let window = try DeviceTools.top()
+    guard let view = window.contentView else { throw NanocodeError("no window is open to share from") }
+    let picker = NSSharingServicePicker(items: items)
+    picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+    return "Opened the share menu."
+  }
+  #else
   @MainActor final class Picker: NSObject, UIDocumentPickerDelegate {
     var done: CheckedContinuation<[URL], Never>?
 
@@ -268,5 +300,6 @@ extension DeviceKit {
       presenter.present(controller, animated: true)
     }
   }
+  #endif
 }
 #endif

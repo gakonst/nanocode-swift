@@ -1,4 +1,5 @@
 import AppKit
+import NanocodeDevice
 import NanocodeKit
 
 @MainActor
@@ -54,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+  func application(_ application: NSApplication, open urls: [URL]) {
+    for url in urls { _ = ShortcutCallbacks.handle(url) }
+  }
 
   @objc func showSettings() {
     window?.makeKeyAndOrderFront(nil)

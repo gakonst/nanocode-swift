@@ -1,15 +1,19 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import AVFoundation
 import Foundation
 import Nanocode
 import Network
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import UniformTypeIdentifiers
 
 extension DeviceKit {
   static let device = HostTool(
     name: "device_info",
-    description: "Describes this iPhone: model, OS, name, locale and languages, time zone, battery and charging, Low Power Mode, thermal state, storage, memory, network, screen, appearance and accessibility settings.",
+    description: "Describes this \(DeviceTools.here): model, OS, name, locale and languages, time zone, battery and charging, Low Power Mode, thermal state, storage, memory, network, screen, appearance and accessibility settings.",
     parameters: DeviceTools.schema([:])
   ) { _ in
     async let network = path()
@@ -47,6 +51,21 @@ extension DeviceKit {
     return .json(.object(object))
   }
 
+  #if os(macOS)
+  @MainActor static func screenFacts() -> [String: JSON] {
+    let info = ProcessInfo.processInfo
+    var object: [String: JSON] = [
+      "platform": "macOS", "version": .string(info.operatingSystemVersionString), "name": .string(Host.current().localizedName ?? "Mac"),
+      "appearance": .string(NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light"),
+      "voiceover": .bool(NSWorkspace.shared.isVoiceOverEnabled), "reduce_motion": .bool(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion),
+      "app_state": .string(NSApp.isActive ? "active" : "inactive"),
+    ]
+    if let screen = NSScreen.main {
+      object["screen"] = ["width_pt": .number(screen.frame.width), "height_pt": .number(screen.frame.height), "scale": .number(screen.backingScaleFactor)]
+    }
+    return object
+  }
+  #else
   @MainActor static func screenFacts() -> [String: JSON] {
     let device = UIDevice.current
     device.isBatteryMonitoringEnabled = true
@@ -75,6 +94,7 @@ extension DeviceKit {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
   }
+  #endif
 
   static func path() async -> JSON {
     let monitor = NWPathMonitor()
@@ -105,7 +125,7 @@ extension DeviceKit {
 
   static let clipboard = HostTool(
     name: "clipboard",
-    description: "The clipboard on this iPhone. types: what it holds (text, URL, image) without reading it. read: its text, URL and, with image true, its image (iOS may ask the owner to allow pasting). write: copy text, a URL or an image (a file from the files tool, or base64). clear empties it. Without an action, text copies and no text reads, as before.",
+    description: "The clipboard on this \(DeviceTools.here). types: what it holds (text, URL, image) without reading it. read: its text, URL and, with image true, its image (iOS may ask the owner to allow pasting). write: copy text, a URL or an image (a file from the files tool, or base64). clear empties it. Without an action, text copies and no text reads, as before.",
     parameters: DeviceTools.schema([
       "action": DeviceTools.actions(clipboardActions),
       "text": prop("string", "For write: the text to copy."),
@@ -121,6 +141,48 @@ extension DeviceKit {
   static func pasteboard(_ input: JSON) async throws -> ToolResult {
     let action = input["action"]?.string ?? (input["text"] == nil ? "read" : "write")
     switch action {
+    #if os(macOS)
+    case "types":
+      return .json(await MainActor.run {
+        let board = NSPasteboard.general
+        let types = board.types ?? []
+        return ["text": .bool(types.contains(.string)), "url": .bool(types.contains(.URL)), "image": .bool(types.contains(.png) || types.contains(.tiff)),
+                "items": .number(Double(board.pasteboardItems?.count ?? 0)), "change_count": .number(Double(board.changeCount))]
+      })
+    case "read":
+      let (text, link, image) = await MainActor.run {
+        let board = NSPasteboard.general
+        let image = input["image"]?.bool == true ? board.data(forType: .png) ?? board.data(forType: .tiff) : nil
+        return (board.string(forType: .string), board.string(forType: .URL), image)
+      }
+      let facts: JSON = ["text": string(text), "url": string(link)]
+      if let image { return try DeviceTools.image(image, description: facts) }
+      return .json(facts)
+    case "write":
+      var data: Data?
+      if let base64 = text(input, "base64") {
+        guard let decoded = Data(base64Encoded: base64) else { throw NanocodeError("base64 is not valid base64") }
+        data = decoded
+      } else if text(input, "path") != nil {
+        data = try Data(contentsOf: try fileURL(input))
+      }
+      let value = input["text"]?.string
+      let link = text(input, "url").flatMap(URL.init(string:))
+      guard value != nil || link != nil || data != nil else { throw NanocodeError("write takes text, url, or an image (path or base64)") }
+      let picture = try data.map { bytes in
+        guard let image = NSImage(data: bytes) else { throw NanocodeError("that file is not an image") }
+        return image
+      }
+      await MainActor.run {
+        let board = NSPasteboard.general
+        board.clearContents()
+        if let picture { board.writeObjects([picture]) } else if let link { board.writeObjects([link as NSURL]) } else { board.setString(value ?? "", forType: .string) }
+      }
+      return .text(picture != nil ? "Copied the image." : link != nil ? "Copied the URL." : "Copied \(value?.count ?? 0) characters.")
+    case "clear":
+      await MainActor.run { _ = NSPasteboard.general.clearContents() }
+      return .text("Cleared the clipboard.")
+    #else
     case "types":
       return .json(await MainActor.run {
         let board = UIPasteboard.general
@@ -158,11 +220,13 @@ extension DeviceKit {
     case "clear":
       await MainActor.run { UIPasteboard.general.items = [] }
       return .text("Cleared the clipboard.")
+    #endif
     default:
       throw unknown("clipboard", clipboardActions)
     }
   }
 
+  #if os(iOS)
   static let screenActions = ["get", "brightness", "haptic", "keep_awake", "torch"]
 
   static let screen = HostTool(
@@ -214,7 +278,7 @@ extension DeviceKit {
       await MainActor.run { UIApplication.shared.isIdleTimerDisabled = on }
       return .json(["keep_awake": .bool(on)])
     case "torch":
-      guard let torch = AVCaptureDevice.default(for: .video), torch.hasTorch else { throw NanocodeError("this iPhone has no torch") }
+      guard let torch = AVCaptureDevice.default(for: .video), torch.hasTorch else { throw NanocodeError("this \(DeviceTools.here) has no torch") }
       let on = input["on"]?.bool ?? true
       let level = input["value"]?.number ?? 1
       guard level > 0, level <= 1 else { throw NanocodeError("the torch level is above 0 and at most 1") }
@@ -226,5 +290,6 @@ extension DeviceKit {
       throw unknown("screen", screenActions)
     }
   }
+  #endif
 }
 #endif

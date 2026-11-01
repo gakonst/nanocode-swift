@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import EventKit
 import Foundation
 import Nanocode
@@ -51,13 +51,13 @@ extension DeviceKit {
 
   static let calendar = HostTool(
     name: "calendar",
-    description: "Every calendar on this iPhone (all accounts added to iOS). list: events between two dates (the next 7 days by default; at most 4 years at once, EventKit's limit). get, create, update (only the fields given), delete. calendars lists calendars; calendar_create and calendar_delete manage them. EventKit can't invite attendees; it reads them.",
+    description: "Every calendar on this \(DeviceTools.here) (all accounts added to iOS). list: events between two dates (the next 7 days by default; at most 4 years at once, EventKit's limit). get, create, update (only the fields given), delete. calendars lists calendars; calendar_create and calendar_delete manage them. EventKit can't invite attendees; it reads them.",
     parameters: schema(calendarActions, paged(calendarProperties))
   ) { call in try await schedule(call.input) }
 
   static let reminders = HostTool(
     name: "reminders",
-    description: "The owner's reminders on this iPhone. list: open reminders (or completed ones), filtered by list, due window and text. get, add, update (only the fields given), complete, uncomplete, delete. lists lists the reminder lists; list_create and list_delete manage them.",
+    description: "The owner's reminders on this \(DeviceTools.here). list: open reminders (or completed ones), filtered by list, due window and text. get, add, update (only the fields given), complete, uncomplete, delete. lists lists the reminder lists; list_create and list_delete manage them.",
     parameters: schema(reminderActions, paged(reminderProperties))
   ) { call in try await todo(call.input) }
 
@@ -93,7 +93,7 @@ extension DeviceKit {
       if let name = text(input, "calendar") {
         created.calendar = try findCalendar(name, .event)
       } else {
-        guard let fallback = events.defaultCalendarForNewEvents else { throw NanocodeError("this iPhone has no calendar to add events to") }
+        guard let fallback = events.defaultCalendarForNewEvents else { throw NanocodeError("this \(DeviceTools.here) has no calendar to add events to") }
         created.calendar = fallback
       }
       try apply(input, to: created)
@@ -232,7 +232,7 @@ extension DeviceKit {
       return found
     }
     let fallback = type == .event ? events.defaultCalendarForNewEvents : events.defaultCalendarForNewReminders()
-    guard let found = fallback?.source else { throw NanocodeError("this iPhone has no account to add it to") }
+    guard let found = fallback?.source else { throw NanocodeError("this \(DeviceTools.here) has no account to add it to") }
     return found
   }
 
@@ -314,7 +314,7 @@ extension DeviceKit {
       if let name = text(input, "list") {
         made.calendar = try findCalendar(name, .reminder)
       } else {
-        guard let fallback = events.defaultCalendarForNewReminders() else { throw NanocodeError("this iPhone has no reminder list") }
+        guard let fallback = events.defaultCalendarForNewReminders() else { throw NanocodeError("this \(DeviceTools.here) has no reminder list") }
         made.calendar = fallback
       }
       try apply(input, to: made)

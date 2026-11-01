@@ -73,7 +73,7 @@ extension DeviceKit {
 
   static let health = HostTool(
     name: "health",
-    description: "Apple Health on this iPhone, every data type. types: the type names (quantities like stepCount or heartRate, categories like sleepAnalysis or headache, workout, and characteristics). authorize: ask the owner for read and write access to a set of types (iOS shows its Health sheet; needs \(DeviceTools.settings.app) open). read: samples of a type between two dates. statistics: sums or averages of a quantity per hour, day, week or month. write: save a quantity (value and unit) or category sample. delete: remove samples \(DeviceTools.settings.app) wrote. characteristics: date of birth, sex, blood type, skin type, wheelchair use. workouts: recent workouts with energy and distance. write_workout: save a workout. iOS never says whether reading was refused: a refused type reads as empty.",
+    description: "Apple Health on this \(DeviceTools.here), every data type. types: the type names (quantities like stepCount or heartRate, categories like sleepAnalysis or headache, workout, and characteristics). authorize: ask the owner for read and write access to a set of types (iOS shows its Health sheet; needs \(DeviceTools.settings.app) open). read: samples of a type between two dates. statistics: sums or averages of a quantity per hour, day, week or month. write: save a quantity (value and unit) or category sample. delete: remove samples \(DeviceTools.settings.app) wrote. characteristics: date of birth, sex, blood type, skin type, wheelchair use. workouts: recent workouts with energy and distance. write_workout: save a workout. iOS never says whether reading was refused: a refused type reads as empty.",
     parameters: schema(healthActions, [
       "type": prop("string", "A type name from types, such as stepCount, heartRate, sleepAnalysis or workout."),
       "read": list(prop("string"), "For authorize: types to read."),
@@ -106,7 +106,7 @@ extension DeviceKit {
       return type
     }
     if let characteristic = characteristicNames[name], let type = HKObjectType.characteristicType(forIdentifier: characteristic) { return type }
-    throw NanocodeError("\(name) is not a Health type this iPhone knows; types lists them")
+    throw NanocodeError("\(name) is not a Health type this \(DeviceTools.here) knows; types lists them")
   }
 
   static let characteristicNames: [String: HKCharacteristicTypeIdentifier] = [

@@ -1,7 +1,9 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import AVFoundation
 import CoreLocation
+#if os(iOS)
 import CoreMotion
+#endif
 import EventKit
 import Foundation
 import ImageIO
@@ -9,10 +11,16 @@ import Nanocode
 import os
 import Photos
 import Speech
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import UniformTypeIdentifiers
 import Vision
+#if os(iOS)
 import VisionKit
+#endif
 
 public struct DeviceSettings: Sendable {
   public var app: String
@@ -35,12 +43,18 @@ public struct DeviceSettings: Sendable {
   }
 }
 
+#if os(iOS)
+public typealias DevicePresenter = UIViewController
+#else
+public typealias DevicePresenter = NSWindow
+#endif
+
 public struct DeviceComposer: Sendable {
   public var available: @MainActor @Sendable (_ kind: String) throws -> Bool
-  public var compose: @MainActor @Sendable (_ kind: String, _ to: [String], _ subject: String, _ body: String, _ from: UIViewController) async throws -> String
+  public var compose: @MainActor @Sendable (_ kind: String, _ to: [String], _ subject: String, _ body: String, _ from: DevicePresenter) async throws -> String
 
   public init(available: @escaping @MainActor @Sendable (_ kind: String) throws -> Bool,
-              compose: @escaping @MainActor @Sendable (_ kind: String, _ to: [String], _ subject: String, _ body: String, _ from: UIViewController) async throws -> String) {
+              compose: @escaping @MainActor @Sendable (_ kind: String, _ to: [String], _ subject: String, _ body: String, _ from: DevicePresenter) async throws -> String) {
     self.available = available
     self.compose = compose
   }
@@ -54,7 +68,7 @@ public enum DeviceTools {
   public static func configure(_ settings: DeviceSettings) { configured.withLock { $0 = settings } }
 
   public static var all: [HostTool] {
-    [openURL, speak, photos, listen] + (settings.composer == nil ? [] : [compose]) + [camera] + DeviceKit.tools
+    [openURL, speak, photos, listen] + (settings.composer == nil ? [] : [compose]) + cameras + DeviceKit.tools
   }
 
   static func schema(_ properties: [String: JSON], required: [String] = []) -> JSON {
@@ -96,9 +110,9 @@ public enum DeviceTools {
     switch await DeviceCapability.permission(name) {
     case .granted: return
     case .prompt:
-      throw NanocodeError("\(DeviceCapability.named(name)?.label ?? name) access hasn't been asked for on this iPhone yet. Ask first with tools.hands({ request: { hand: \"\(DeviceTools.settings.hand)\", capability: \"\(name)\", reason } }), saying why.")
+      throw NanocodeError("\(DeviceCapability.named(name)?.label ?? name) access hasn't been asked for on this \(DeviceTools.here) yet. Ask first with tools.hands({ request: { hand: \"\(DeviceTools.settings.hand)\", capability: \"\(name)\", reason } }), saying why.")
     case .denied:
-      throw NanocodeError("\(DeviceCapability.named(name)?.label ?? name) access is off for this app; the owner can turn it on in iOS Settings › \(DeviceTools.settings.app).")
+      throw NanocodeError("\(DeviceCapability.named(name)?.label ?? name) access is off for this app; the owner can turn it on in \(DeviceTools.settingsApp) › \(DeviceTools.settings.app).")
     }
   }
 
@@ -196,7 +210,7 @@ public enum DeviceTools {
     if !deferred.isEmpty {
       let note: JSON = [
         "not_included": .array(deferred.map(JSON.string)),
-        "why": .string("one answer from this iPhone carries at most 8 MiB (the session's REMOTE_MAX_FRAME_BYTES); these did not fit after the images above, so view them in another call"),
+        "why": .string("one answer from this \(DeviceTools.here) carries at most 8 MiB (the session's REMOTE_MAX_FRAME_BYTES); these did not fit after the images above, so view them in another call"),
       ]
       content.append(.text(note.text(pretty: false)))
       listed.append(note)
@@ -217,7 +231,7 @@ public enum DeviceTools {
   static func image(_ data: Data, description: JSON) throws -> ToolResult {
     let frame = try Frame(data)
     guard let shot = try fitted(frame, within: frameBudget) else {
-      throw NanocodeError("the image doesn't fit in the 8 MiB one answer from this iPhone can carry (the session's REMOTE_MAX_FRAME_BYTES) even at JPEG quality \(qualities.last ?? 0)")
+      throw NanocodeError("the image doesn't fit in the 8 MiB one answer from this \(DeviceTools.here) can carry (the session's REMOTE_MAX_FRAME_BYTES) even at JPEG quality \(qualities.last ?? 0)")
     }
     var shown = description.object ?? [:]
     shown["shown_width"] = .number(Double(shot.width))
@@ -225,6 +239,7 @@ public enum DeviceTools {
     return .content([.text(JSON.object(shown).text(pretty: true)), .image(dataURL: shot.dataURL)], structured: .object(shown))
   }
 
+  #if os(iOS)
   @MainActor static func open(_ url: URL) { UIApplication.shared.open(url) }
 
   @MainActor static func top() throws -> UIViewController {
@@ -235,10 +250,40 @@ public enum DeviceTools {
     while let presented = controller.presentedViewController { controller = presented }
     return controller
   }
+  #else
+  @MainActor static func open(_ url: URL) { NSWorkspace.shared.open(url) }
+
+  @MainActor static func top() throws -> NSWindow {
+    guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: \.isVisible) else {
+      throw NanocodeError("the app is not on screen")
+    }
+    return window
+  }
+  #endif
+
+  #if os(iOS)
+  static let here = "iPhone"
+  static let settingsApp = "iOS Settings"
+
+  @MainActor public static var environment: HandEnvironment {
+    let device = UIDevice.current
+    return HandEnvironment(platform: "ios", osVersion: "\(device.systemName) \(device.systemVersion), \(device.model)")
+  }
+  static func cgImage(_ image: UIImage) -> CGImage? { image.cgImage }
+  #else
+  static let here = "Mac"
+  static let settingsApp = "System Settings"
+
+  @MainActor public static var environment: HandEnvironment {
+    HandEnvironment(platform: "darwin", osVersion: ProcessInfo.processInfo.operatingSystemVersionString)
+  }
+  static func cgImage(_ image: NSImage) -> CGImage? { image.cgImage(forProposedRect: nil, context: nil, hints: nil) }
+  static let cameras: [HostTool] = []
+  #endif
 
   static let openURL = HostTool(
     name: "open_url",
-    description: "Opens an http or https URL in the browser on this iPhone.",
+    description: "Opens an http or https URL in the browser on this \(DeviceTools.here).",
     parameters: schema(["url": ["type": "string", "description": "The http(s) URL to open."]], required: ["url"])
   ) { call in
     guard let text = call.input["url"]?.string, let url = URL(string: text), ["http", "https"].contains(url.scheme ?? "") else {
@@ -252,7 +297,7 @@ public enum DeviceTools {
 
   static let speak = HostTool(
     name: "speak",
-    description: "Speaks text aloud on this iPhone.",
+    description: "Speaks text aloud on this \(DeviceTools.here).",
     parameters: schema(["text": ["type": "string"], "language": ["type": "string", "description": "A BCP 47 language such as en-US."]], required: ["text"])
   ) { call in
     guard let text = call.input["text"]?.string else { throw NanocodeError("speak takes text") }
@@ -267,7 +312,7 @@ public enum DeviceTools {
 
   static let photos = HostTool(
     name: "photos",
-    description: "The photo library on this iPhone. list: recent photos and videos, newest first. view: look at photos (ids, several per call; a video shows its poster frame), each returned as an image at up to 2576 px and 3.75 megapixels, as large as the models use; in a Code Mode cell pass the result's image items to image(). One answer carries at most 8 MiB, usually several photos: ones that don't fit are listed as not_included, so view those in another call. text: read the text in photos.",
+    description: "The photo library on this \(DeviceTools.here). list: recent photos and videos, newest first. view: look at photos (ids, several per call; a video shows its poster frame), each returned as an image at up to 2576 px and 3.75 megapixels, as large as the models use; in a Code Mode cell pass the result's image items to image(). One answer carries at most 8 MiB, usually several photos: ones that don't fit are listed as not_included, so view those in another call. text: read the text in photos.",
     parameters: schema([
       "action": actions(["list", "view", "text"]),
       "limit": ["type": "integer", "description": "For list: how many, 20 by default and at most 200."],
@@ -370,7 +415,7 @@ public enum DeviceTools {
       options.version = .current
       PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: viewEdge, height: viewEdge), contentMode: .aspectFit, options: options) { image, info in
         if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
-        if let image = image?.cgImage {
+        if let image = image.flatMap(Self.cgImage) {
           continuation.resume(returning: Poster(image: image))
         } else {
           let error = info?[PHImageErrorKey] as? Error
@@ -407,16 +452,16 @@ public enum DeviceTools {
       group.cancelAll()
       return first
     }
-    guard let fix else { throw NanocodeError("this iPhone did not find its location within 20 seconds") }
+    guard let fix else { throw NanocodeError("this \(DeviceTools.here) did not find its location within 20 seconds") }
     return fix
   }
 
   static let listen = HostTool(
     name: "listen",
-    description: "Records the microphone on this iPhone for some seconds and returns what was said.",
+    description: "Records the microphone on this \(DeviceTools.here) for some seconds and returns what was said.",
     parameters: schema([
       "seconds": ["type": "number", "description": "How long to record, 5 by default and at most 60."],
-      "language": ["type": "string", "description": "A BCP 47 language such as en-US; the iPhone's by default."],
+      "language": ["type": "string", "description": .string("A BCP 47 language such as en-US; the \(DeviceTools.here)'s by default.")],
     ])
   ) { call in
     try await gate("microphone")
@@ -442,10 +487,12 @@ public enum DeviceTools {
     }
 
     func run(seconds: Double) async throws -> String {
+      #if os(iOS)
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.record, mode: .measurement, options: .duckOthers)
       try session.setActive(true, options: .notifyOthersOnDeactivation)
       defer { try? session.setActive(false, options: .notifyOthersOnDeactivation) }
+      #endif
       let input = engine.inputNode
       let format = input.outputFormat(forBus: 0)
       request.shouldReportPartialResults = true
@@ -499,7 +546,7 @@ public enum DeviceTools {
 
   static let compose = HostTool(
     name: "compose",
-    description: "Opens a prefilled text message or email on this iPhone for the owner to review and send; it sends nothing itself.",
+    description: "Opens a prefilled text message or email on this \(DeviceTools.here) for the owner to review and send; it sends nothing itself.",
     parameters: schema([
       "kind": ["type": "string", "enum": ["message", "email"]],
       "to": ["type": "array", "items": ["type": "string"], "description": "Phone numbers or email addresses."],
@@ -514,13 +561,14 @@ public enum DeviceTools {
     let email = input["kind"]?.string == "email"
     guard let composer = settings.composer else { throw NanocodeError("\(settings.app) does not draft messages or email") }
     guard try composer.available(email ? "email" : "message") else {
-      throw NanocodeError(email ? "this iPhone has no Mail account set up" : "this iPhone cannot send text messages")
+      throw NanocodeError(email ? "this \(DeviceTools.here) has no Mail account set up" : "this \(DeviceTools.here) cannot send text messages")
     }
     let result = try await composer.compose(email ? "email" : "message", recipients, input["subject"]?.string ?? "",
                                             input["body"]?.string ?? "", presenter)
     return .text(email ? "The email was \(result)." : "The message was \(result).")
   }
 
+  #if os(iOS)
   @MainActor final class Capture: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, @preconcurrency VNDocumentCameraViewControllerDelegate {
     var photo: CheckedContinuation<UIImage?, Never>?
     var scan: CheckedContinuation<[UIImage], Never>?
@@ -556,9 +604,11 @@ public enum DeviceTools {
     }
   }
 
+  static let cameras = [camera]
+
   static let camera = HostTool(
     name: "camera",
-    description: "Opens the camera on this iPhone for the owner: photo takes one picture and returns it as an image (up to 2576 px and 3.75 megapixels), scan scans document pages and returns each page's text and image; in a Code Mode cell pass the result's image items to image().",
+    description: "Opens the camera on this \(DeviceTools.here) for the owner: photo takes one picture and returns it as an image (up to 2576 px and 3.75 megapixels), scan scans document pages and returns each page's text and image; in a Code Mode cell pass the result's image items to image().",
     parameters: schema(["mode": ["type": "string", "enum": ["photo", "scan"]]]),
     content: true
   ) { call in
@@ -612,7 +662,7 @@ public enum DeviceTools {
   }
 
   @MainActor static func scanPages() async throws -> [Shot] {
-    guard VNDocumentCameraViewController.isSupported else { throw NanocodeError("this iPhone cannot scan documents") }
+    guard VNDocumentCameraViewController.isSupported else { throw NanocodeError("this \(DeviceTools.here) cannot scan documents") }
     let presenter = try top()
     let capture = Capture()
     let controller = VNDocumentCameraViewController()
@@ -626,7 +676,7 @@ public enum DeviceTools {
   }
 
   @MainActor static func takePhoto() async throws -> Shot? {
-    guard UIImagePickerController.isSourceTypeAvailable(.camera) else { throw NanocodeError("this iPhone has no camera available") }
+    guard UIImagePickerController.isSourceTypeAvailable(.camera) else { throw NanocodeError("this \(DeviceTools.here) has no camera available") }
     let presenter = try top()
     let capture = Capture()
     let controller = UIImagePickerController()
@@ -674,5 +724,6 @@ public enum DeviceTools {
       }
     }
   }
+  #endif
 }
 #endif

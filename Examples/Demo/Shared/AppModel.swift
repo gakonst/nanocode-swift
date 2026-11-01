@@ -1,4 +1,6 @@
 import Foundation
+import NanocodeDevice
+import NanocodeDeviceCompose
 import NanocodeKit
 import Observation
 #if os(iOS)
@@ -215,7 +217,6 @@ final class AppModel {
       }
     }
     try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-    DemoTools.workspace = workspace
   }
 
   func useFolder(_ url: URL?) async {
@@ -228,7 +229,6 @@ final class AppModel {
     }
     folder = url
     try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-    DemoTools.workspace = workspace
     if runner == .device, !chat.pending { await newChat() }
   }
 
@@ -318,6 +318,7 @@ final class AppModel {
   }
 
   func start() async {
+    DeviceTools.configure(DeviceSettings(app: "Nanocode", hand: Self.handName, scheme: "nanocodedemo", composer: .system))
     python.start()
     catalog = try? await runtime.models()
     if access == .tempo { await loadWallet() }
@@ -348,8 +349,8 @@ final class AppModel {
       }
     }
     if let command = UserDefaults.standard.string(forKey: "NanocodeHand"), let parsed = HandConfiguration.parse(command: command) {
-      await hand.start(HandConfiguration(url: parsed.url, token: parsed.token, name: Self.handName, workspace: workspace, tools: DemoTools.all,
-                                         capabilities: DemoTools.capabilities, environment: DemoTools.environment))
+      await hand.start(HandConfiguration(url: parsed.url, token: parsed.token, name: Self.handName, workspace: workspace, tools: DeviceTools.all,
+                                         capabilities: Self.capabilities, environment: DeviceTools.environment))
     }
     if let prompt = UserDefaults.standard.string(forKey: "NanocodePrompt") {
       await newChat()
@@ -397,7 +398,7 @@ final class AppModel {
   func configuration(id: String, provider: Provider, model: String, thinking: String?) -> SessionConfiguration {
     var configuration = SessionConfiguration(
       sessionID: id, provider: provider, model: model, thinking: thinking,
-      authentication: authentication(for: provider), workspace: workspace, tools: DemoTools.all,
+      authentication: authentication(for: provider), workspace: workspace, tools: DeviceTools.all,
       environment: SessionEnvironment(cwd: workspace.path))
     configuration.paidTools = paidTools && wallet.connected
     if !machines.isEmpty {
@@ -436,6 +437,8 @@ final class AppModel {
     await attachHand(session)
   }
 
+  static let capabilities = DeviceCapability.hand { _, _ in true }
+
   static var handName: String {
     #if os(macOS)
     let name = Host.current().localizedName ?? "mac"
@@ -464,8 +467,8 @@ final class AppModel {
       await cloudHand.stop()
       handFor = session.id
       await cloudHand.start(HandConfiguration(url: access.url.absoluteString, token: access.token, name: Self.handName,
-                                              workspace: workspace, tools: DemoTools.all,
-                                              capabilities: DemoTools.capabilities, environment: DemoTools.environment))
+                                              workspace: workspace, tools: DeviceTools.all,
+                                              capabilities: Self.capabilities, environment: DeviceTools.environment))
       session.hand = await cloudHand.online(within: .seconds(10)) ? Self.handName : nil
     } catch {
       session.hand = nil

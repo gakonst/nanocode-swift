@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import AVFoundation
 import Foundation
 import Nanocode
@@ -9,11 +9,11 @@ extension DeviceKit {
 
   static let speech = HostTool(
     name: "speech",
-    description: "Speech on this iPhone beyond listen and speak. transcribe: the words in an audio or video file from the files tool (on this iPhone when it can). voices: the voices speak can use. languages: the languages transcription supports.",
+    description: "Speech on this \(DeviceTools.here) beyond listen and speak. transcribe: the words in an audio or video file from the files tool (on this \(DeviceTools.here) when it can). voices: the voices speak can use. languages: the languages transcription supports.",
     parameters: schema(speechActions, [
       "container": prop("string", "For transcribe: the files container."),
       "path": prop("string", "For transcribe: the file's path."),
-      "language": prop("string", "A BCP 47 language such as en-US or el-GR; the iPhone's by default."),
+      "language": prop("string", "A BCP 47 language such as en-US or el-GR; the \(DeviceTools.here)'s by default."),
     ])
   ) { call in try await voice(call.input) }
 

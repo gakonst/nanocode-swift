@@ -11,8 +11,8 @@ extension DeviceKit {
     HostTool(
       name: "wallet",
       description: Entitlements.wallet
-        ? "Apple Wallet on this iPhone. list: the passes \(DeviceTools.settings.app) may see (boarding passes, tickets, cards of its pass types). add: add a pass (.pkpass) from a URL or a file; the owner confirms. open: open a pass, or Wallet. remove: remove a pass by serial and type."
-        : "Apple Wallet on this iPhone. add: add a pass (.pkpass, such as a boarding pass or ticket) from a URL or a file; the owner confirms. open: open Wallet. Listing passes needs a build with the Wallet entitlement.",
+        ? "Apple Wallet on this \(DeviceTools.here). list: the passes \(DeviceTools.settings.app) may see (boarding passes, tickets, cards of its pass types). add: add a pass (.pkpass) from a URL or a file; the owner confirms. open: open a pass, or Wallet. remove: remove a pass by serial and type."
+        : "Apple Wallet on this \(DeviceTools.here). add: add a pass (.pkpass, such as a boarding pass or ticket) from a URL or a file; the owner confirms. open: open Wallet. Listing passes needs a build with the Wallet entitlement.",
       parameters: schema(walletActions, [
         "url": prop("string", "For add: where to download the .pkpass."),
         "container": prop("string", "For add: the files container of a .pkpass."),
@@ -24,7 +24,7 @@ extension DeviceKit {
   }
 
   static func passes(_ input: JSON) async throws -> ToolResult {
-    guard PKPassLibrary.isPassLibraryAvailable() else { throw NanocodeError("Wallet is not available on this iPhone") }
+    guard PKPassLibrary.isPassLibraryAvailable() else { throw NanocodeError("Wallet is not available on this \(DeviceTools.here)") }
     let library = PKPassLibrary()
     switch input["action"]?.string {
     case "list" where Entitlements.wallet:

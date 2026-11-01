@@ -27,6 +27,17 @@ targets:
     dependencies:
       - package: Nanocode
         product: NanocodeKit
+      - package: Nanocode
+        product: NanocodeDevice
+      - package: Nanocode
+        product: NanocodeDeviceCompose
+    info:
+      path: macOS/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: xyz.nanocode.demo
+            CFBundleURLSchemes: [nanocodedemo]
+        NSBonjourServices: [_http._tcp, _https._tcp, _ipp._tcp, _airplay._tcp, _raop._tcp, _googlecast._tcp, _smb._tcp, _ssh._tcp, _companion-link._tcp, _hap._tcp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
@@ -41,6 +52,8 @@ targets:
         INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: The agent can read, add and complete your reminders when you ask it to.
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: The agent can find where you are and search places nearby when you ask it to.
         INFOPLIST_KEY_NSLocationUsageDescription: The agent can find where you are and search places nearby when you ask it to.
+        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: The agent can remind you when you arrive at or leave a place.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: The agent can find printers, speakers, TVs and other devices on your network when you ask it to.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: The agent can record and transcribe what you say when you ask it to listen.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Recordings become text, on this device when it can.
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: The agent can list Bluetooth devices near you when you ask it to.
@@ -56,6 +69,17 @@ targets:
     dependencies:
       - package: Nanocode
         product: NanocodeKit
+      - package: Nanocode
+        product: NanocodeDevice
+      - package: Nanocode
+        product: NanocodeDeviceCompose
+    info:
+      path: iOS/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: xyz.nanocode.demo
+            CFBundleURLSchemes: [nanocodedemo]
+        NSBonjourServices: [_http._tcp, _https._tcp, _ipp._tcp, _airplay._tcp, _raop._tcp, _googlecast._tcp, _smb._tcp, _ssh._tcp, _companion-link._tcp, _hap._tcp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.nanocode.demo
@@ -76,6 +100,8 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: The agent can open the camera to take a photo or scan a document for you.
         INFOPLIST_KEY_NSMotionUsageDescription: The agent can read your step count and activity when you ask it to.
         INFOPLIST_KEY_NSAppleMusicUsageDescription: The agent can search and play music from your library when you ask it to.
+        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: The agent can remind you when you arrive at or leave a place.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: The agent can find printers, speakers, TVs and other devices on your network when you ask it to.
         TARGETED_DEVICE_FAMILY: "1,2"
   NanocodeUIKit-iOS:
     type: application

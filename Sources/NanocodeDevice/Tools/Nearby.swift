@@ -1,6 +1,8 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 @preconcurrency import CoreBluetooth
+#if os(iOS)
 @preconcurrency import CoreNFC
+#endif
 import Foundation
 import Nanocode
 import Network
@@ -10,7 +12,7 @@ extension DeviceKit {
 
   static let bluetooth = HostTool(
     name: "bluetooth",
-    description: "Bluetooth Low Energy devices near this iPhone. scan: devices advertising nearby for some seconds, strongest first, with names, services and manufacturer data. inspect: connect to one (id from scan) and list its services and characteristics with every readable value. read: one characteristic's value. write: send bytes (hex) or text to a characteristic. Classic Bluetooth audio devices don't show; iOS only lets apps use BLE.",
+    description: "Bluetooth Low Energy devices near this \(DeviceTools.here). scan: devices advertising nearby for some seconds, strongest first, with names, services and manufacturer data. inspect: connect to one (id from scan) and list its services and characteristics with every readable value. read: one characteristic's value. write: send bytes (hex) or text to a characteristic. Classic Bluetooth audio devices don't show; iOS only lets apps use BLE.",
     parameters: schema(bluetoothActions, [
       "seconds": prop("number", "For scan: how long, 5 by default and at most 60. For the others: how long to wait for the device, 10 by default."),
       "services": list(prop("string"), "For scan: only devices advertising these service UUIDs."),
@@ -80,7 +82,7 @@ extension DeviceKit {
         manager = CBCentralManager(delegate: self, queue: .main)
       }
       guard let manager, state == .poweredOn else {
-        throw NanocodeError(state == .unauthorized ? "Bluetooth access is off for this app; the owner can turn it on in iOS Settings › \(DeviceTools.settings.app)." : "Bluetooth is off or unavailable")
+        throw NanocodeError(state == .unauthorized ? "Bluetooth access is off for this app; the owner can turn it on in \(DeviceTools.settingsApp) › \(DeviceTools.settings.app)." : "Bluetooth is off or unavailable")
       }
       return manager
     }
@@ -138,7 +140,7 @@ extension DeviceKit {
     func connect(_ id: UUID, seconds: Double) async throws -> CBPeripheral {
       let manager = try await start()
       guard let target = manager.retrievePeripherals(withIdentifiers: [id]).first else {
-        throw NanocodeError("this iPhone doesn't know that device; scan first")
+        throw NanocodeError("this \(DeviceTools.here) doesn't know that device; scan first")
       }
       peripheral = target
       target.delegate = self
@@ -239,7 +241,7 @@ extension DeviceKit {
 
   static let localNetwork = HostTool(
     name: "local_network",
-    description: "Devices and services on the Wi-Fi network around this iPhone, found with Bonjour: printers, speakers, TVs, smart-home hubs, computers. browse: services of one or more types for some seconds, with their host, port and TXT records. types: the service types \(DeviceTools.settings.app) may browse (iOS only allows the types the app declares).",
+    description: "Devices and services on the Wi-Fi network around this \(DeviceTools.here), found with Bonjour: printers, speakers, TVs, smart-home hubs, computers. browse: services of one or more types for some seconds, with their host, port and TXT records. types: the service types \(DeviceTools.settings.app) may browse (iOS only allows the types the app declares).",
     parameters: schema(localNetworkActions, [
       "types": list(prop("string"), "For browse: service types such as _http._tcp or _airplay._tcp; every declared type by default."),
       "seconds": prop("number", "For browse: how long, 3 by default and at most 30."),
@@ -375,11 +377,12 @@ extension DeviceKit {
     return answer
   }
 
+  #if os(iOS)
   static let nfcActions = ["read", "write"]
 
   static let nfc = HostTool(
     name: "nfc",
-    description: "NFC tags with this iPhone: read shows the iOS scan sheet and returns the tag's NDEF records (text, links, anything else as hex); write writes text or a link to a tag. The owner holds the top of the iPhone to the tag. Needs \(DeviceTools.settings.app) open.",
+    description: "NFC tags with this \(DeviceTools.here): read shows the iOS scan sheet and returns the tag's NDEF records (text, links, anything else as hex); write writes text or a link to a tag. The owner holds the top of the \(DeviceTools.here) to the tag. Needs \(DeviceTools.settings.app) open.",
     parameters: schema(nfcActions, [
       "text": prop("string", "For write: text to write."),
       "url": prop("string", "For write: a link to write."),
@@ -415,7 +418,7 @@ extension DeviceKit {
     var done: CheckedContinuation<Result<JSON, Error>, Never>?
 
     static func run(_ writing: NFCNDEFMessage?, message: String) async throws -> JSON {
-      guard NFCNDEFReaderSession.readingAvailable else { throw NanocodeError("this iPhone can't read NFC tags") }
+      guard NFCNDEFReaderSession.readingAvailable else { throw NanocodeError("this \(DeviceTools.here) can't read NFC tags") }
       let tags = Tags()
       tags.writing = writing
       let session = NFCNDEFReaderSession(delegate: tags, queue: .main, invalidateAfterFirstRead: false)
@@ -511,6 +514,7 @@ extension DeviceKit {
       return .object(object)
     }
   }
+  #endif
 }
 
 extension Data {

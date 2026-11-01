@@ -1,15 +1,23 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import AVFoundation
 import Contacts
 @preconcurrency import CoreBluetooth
 import CoreLocation
+#if os(iOS)
 import CoreMotion
+#endif
+#if os(iOS)
 @preconcurrency import CoreNFC
+#endif
 import EventKit
 import Intents
+#if os(iOS)
 import MediaPlayer
+#endif
 import Nanocode
+#if os(iOS)
 import PassKit
+#endif
 import Photos
 import Speech
 import UserNotifications
@@ -31,7 +39,7 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
 
   public static let groups = ["Your data", "Where you are", "Camera and voice", "Home and media", "Nearby", "Alerts"]
 
-  public static let all: [DeviceCapability] = [
+  static let every: [DeviceCapability] = [
     DeviceCapability(name: "contacts", label: "Contacts", group: "Your data", description: "Search, add, edit and group contacts",
                     standardReason: "The assistant can search, add and edit your contacts when you ask it to.",
                     tools: ["contacts"], symbol: "person.crop.circle"),
@@ -75,7 +83,7 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
                     standardReason: "The assistant can find printers, speakers, TVs and other devices on your network when you ask it to.",
                     tools: ["local_network"], symbol: "network"),
     DeviceCapability(name: "nfc", label: "NFC tags", group: "Nearby", description: "Read and write NFC tags",
-                    standardReason: "The assistant can read and write NFC tags you hold your iPhone to.", tools: ["nfc"], symbol: "wave.3.right",
+                    standardReason: "The assistant can read and write NFC tags you hold your \(DeviceTools.here) to.", tools: ["nfc"], symbol: "wave.3.right",
                     entitlement: Entitlements.nfcKey),
     DeviceCapability(name: "notifications", label: "Notifications", group: "Alerts", description: "Schedule, list and clear notifications",
                     standardReason: "The assistant can remind you with a notification.",
@@ -85,9 +93,23 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
                     entitlement: Entitlements.focusKey),
   ]
 
+  #if os(iOS)
+  public static let all = every
+  #else
+  public static let all = every.filter { !["motion", "home", "music", "nfc", "camera", "health", "wallet"].contains($0.name) }
+  #endif
+
   public static var available: [DeviceCapability] { all.filter(\.available) }
 
-  public static let open: [(tool: String, label: String, symbol: String)] = [
+  public static var open: [(tool: String, label: String, symbol: String)] {
+    #if os(iOS)
+    everyOpen
+    #else
+    everyOpen.filter { !["screen", "wallet"].contains($0.tool) }
+    #endif
+  }
+
+  static let everyOpen: [(tool: String, label: String, symbol: String)] = [
     ("device_info", "Device info", "iphone"), ("open_url", "Open links", "safari"), ("clipboard", "Clipboard", "doc.on.clipboard"),
     ("speak", "Speak aloud", "speaker.wave.2"), ("compose", "Message and email drafts", "square.and.pencil"), ("shortcut", "Run Shortcuts", "square.stack.3d.up"),
     ("files", "Files and the document picker", "folder"), ("screen", "Brightness, haptics and torch", "sun.max"), ("wallet", "Add Wallet passes", "wallet.pass"),
@@ -128,11 +150,17 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       }
     case "calendar": return events(.event)
     case "reminders": return events(.reminder)
+    #if os(iOS)
     case "health": return await DeviceKit.healthPermission()
     case "wallet": return PKPassLibrary.isPassLibraryAvailable() ? .granted : .denied
+    #endif
     case "location":
       switch await MainActor.run(body: { DeviceTools.locator.authorizationStatus }) {
+      #if os(iOS)
       case .authorizedAlways, .authorizedWhenInUse: return .granted
+      #else
+      case .authorizedAlways: return .granted
+      #endif
       case .denied, .restricted: return .denied
       default: return .prompt
       }
@@ -140,7 +168,9 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       switch await MainActor.run(body: { DeviceTools.locator.authorizationStatus }) {
       case .authorizedAlways: return .granted
       case .denied, .restricted: return .denied
+      #if os(iOS)
       case .authorizedWhenInUse: return UserDefaults.standard.bool(forKey: alwaysAskedKey) ? .denied : .prompt
+      #endif
       default: return .prompt
       }
     case "notifications":
@@ -167,6 +197,7 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       case .denied, .restricted: return .denied
       default: return .prompt
       }
+    #if os(iOS)
     case "motion":
       switch CMMotionActivityManager.authorizationStatus() {
       case .authorized: return .granted
@@ -180,6 +211,7 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       case .denied, .restricted: return .denied
       default: return .prompt
       }
+    #endif
     case "bluetooth":
       switch CBManager.authorization {
       case .allowedAlways: return .granted
@@ -187,7 +219,9 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       default: return .prompt
       }
     case "local_network": return DeviceKit.localNetworkPermission()
+    #if os(iOS)
     case "nfc": return NFCNDEFReaderSession.readingAvailable ? .granted : .denied
+    #endif
     default: return .denied
     }
   }
@@ -207,21 +241,27 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
     case "contacts": _ = try? await CNContactStore().requestAccess(for: .contacts)
     case "calendar": _ = try? await DeviceTools.events.requestFullAccessToEvents()
     case "reminders": _ = try? await DeviceTools.events.requestFullAccessToReminders()
+    #if os(iOS)
     case "health": return await DeviceKit.askHealth()
+    #endif
     case "location":
       await MainActor.run { DeviceTools.locator.requestWhenInUseAuthorization() }
       await settle(name)
     case "location_always":
       let before = await MainActor.run { DeviceTools.locator.authorizationStatus }
       await MainActor.run { DeviceTools.locator.requestAlwaysAuthorization() }
+      #if os(iOS)
       if before == .authorizedWhenInUse { UserDefaults.standard.set(true, forKey: alwaysAskedKey) }
+      #endif
       for _ in 0..<600 {
         guard await MainActor.run(body: { DeviceTools.locator.authorizationStatus }) == before else { break }
         try? await Task.sleep(for: .milliseconds(100))
       }
+      #if os(iOS)
       if await MainActor.run(body: { DeviceTools.locator.authorizationStatus }) == .authorizedWhenInUse {
         UserDefaults.standard.set(true, forKey: alwaysAskedKey)
       }
+      #endif
     case "notifications": _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
     case "focus":
       _ = await SystemAuthorization.focus()
@@ -229,11 +269,13 @@ public struct DeviceCapability: Sendable, Hashable, Identifiable {
       _ = await SystemAuthorization.speech()
       _ = await AVCaptureDevice.requestAccess(for: .audio)
     case "camera": _ = await AVCaptureDevice.requestAccess(for: .video)
+    #if os(iOS)
     case "motion":
       let now = Date()
       _ = try? await DeviceTools.steps(now.addingTimeInterval(-60), now)
     case "home": return await HomeHub.shared.ask()
     case "music": _ = await MPMediaLibrary.requestAuthorization()
+    #endif
     case "bluetooth": _ = try? await DeviceKit.BLE().scan(seconds: 1, services: [])
     case "local_network": return await DeviceKit.askLocalNetwork()
     default: break

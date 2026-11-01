@@ -1,3 +1,4 @@
+import NanocodeDevice
 import NanocodeKit
 #if os(macOS)
 import AppKit
@@ -431,8 +432,8 @@ final class SettingsNode: Stack {
       return
     }
     let slug = String(handName.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" })
-    let configuration = HandConfiguration(url: parsed.url, token: parsed.token, name: slug, workspace: model.workspace, tools: DemoTools.all,
-                                          capabilities: DemoTools.capabilities, environment: DemoTools.environment)
+    let configuration = HandConfiguration(url: parsed.url, token: parsed.token, name: slug, workspace: model.workspace, tools: DeviceTools.all,
+                                          capabilities: AppModel.capabilities, environment: DeviceTools.environment)
     let monitor = model.hand
     Task { await monitor.start(configuration) }
   }

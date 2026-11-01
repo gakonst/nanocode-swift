@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import Contacts
 import Foundation
 import Nanocode
@@ -9,7 +9,7 @@ extension DeviceKit {
 
   static let contacts = HostTool(
     name: "contacts",
-    description: "The owner's contacts on this iPhone (every account added to iOS). search: by name, or by phone, email, organization or any text with query. get: one by id. list: everyone in the owner's order. create, update (only the fields given; a list given replaces that list), delete. groups, group_members, group_create, group_rename, group_delete, group_add and group_remove manage groups; containers lists the accounts.",
+    description: "The owner's contacts on this \(DeviceTools.here) (every account added to iOS). search: by name, or by phone, email, organization or any text with query. get: one by id. list: everyone in the owner's order. create, update (only the fields given; a list given replaces that list), delete. groups, group_members, group_create, group_rename, group_delete, group_add and group_remove manage groups; containers lists the accounts.",
     parameters: schema(contactActions, paged(contactProperties))
   ) { call in try await addressBook(call.input) }
 

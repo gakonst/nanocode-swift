@@ -8,7 +8,7 @@ extension DeviceKit {
 
   static let motion = HostTool(
     name: "motion",
-    description: "Motion on this iPhone. summary: steps, distance, floors, pace and cadence, and minutes walking, running, cycling, driving or still between two dates (today by default; iOS keeps 7 days). activities: each stretch of activity with its start, kind and confidence. sensors: average orientation, gravity, acceleration and heading over a few seconds. altitude: barometric pressure, relative and absolute altitude over a few seconds.",
+    description: "Motion on this \(DeviceTools.here). summary: steps, distance, floors, pace and cadence, and minutes walking, running, cycling, driving or still between two dates (today by default; iOS keeps 7 days). activities: each stretch of activity with its start, kind and confidence. sensors: average orientation, gravity, acceleration and heading over a few seconds. altitude: barometric pressure, relative and absolute altitude over a few seconds.",
     parameters: DeviceTools.schema([
       "action": DeviceTools.actions(motionActions),
       "from": when, "to": when,
@@ -27,7 +27,7 @@ extension DeviceKit {
     switch action {
     case "summary":
       try await DeviceTools.gate("motion")
-      guard CMPedometer.isStepCountingAvailable() else { throw NanocodeError("this iPhone does not count steps") }
+      guard CMPedometer.isStepCountingAvailable() else { throw NanocodeError("this \(DeviceTools.here) does not count steps") }
       var object = try await DeviceTools.steps(start, end)
       let extra = try await pace(start, end)
       object.merge(extra) { first, _ in first }
@@ -37,15 +37,15 @@ extension DeviceKit {
       return .json(.object(object))
     case "activities":
       try await DeviceTools.gate("motion")
-      guard CMMotionActivityManager.isActivityAvailable() else { throw NanocodeError("this iPhone does not record activity") }
+      guard CMMotionActivityManager.isActivityAvailable() else { throw NanocodeError("this \(DeviceTools.here) does not record activity") }
       return .json(.array(await stretches(start, end)))
     case "sensors":
-      guard sensorManager.isDeviceMotionAvailable else { throw NanocodeError("this iPhone has no motion sensors available") }
+      guard sensorManager.isDeviceMotionAvailable else { throw NanocodeError("this \(DeviceTools.here) has no motion sensors available") }
       guard seconds > 0, seconds <= 60 else { throw NanocodeError("seconds is above 0 and at most 60") }
       return .json(try await sample(seconds))
     case "altitude":
       try await DeviceTools.gate("motion")
-      guard CMAltimeter.isRelativeAltitudeAvailable() else { throw NanocodeError("this iPhone has no barometer") }
+      guard CMAltimeter.isRelativeAltitudeAvailable() else { throw NanocodeError("this \(DeviceTools.here) has no barometer") }
       guard seconds > 0, seconds <= 60 else { throw NanocodeError("seconds is above 0 and at most 60") }
       return .json(await barometer(seconds))
     default:

@@ -25,7 +25,7 @@ extension DeviceKit {
 
   static let home = HostTool(
     name: "home",
-    description: "Apple Home (HomeKit) on this iPhone. homes: homes with their rooms and zones. accessories: every accessory (filter by home or room) with its services, characteristics and current values. read: refresh one accessory's values. set: change a characteristic, by id or by kind (power, brightness, hue, saturation, color_temperature, target_temperature, heating_cooling, lock, position, active, door, speed, volume, mute, security…). scenes: the home's scenes; run_scene runs one.",
+    description: "Apple Home (HomeKit) on this \(DeviceTools.here). homes: homes with their rooms and zones. accessories: every accessory (filter by home or room) with its services, characteristics and current values. read: refresh one accessory's values. set: change a characteristic, by id or by kind (power, brightness, hue, saturation, color_temperature, target_temperature, heating_cooling, lock, position, active, door, speed, volume, mute, security…). scenes: the home's scenes; run_scene runs one.",
     parameters: schema(homeActions, [
       "home": prop("string", "A home name or id; the primary home by default."),
       "room": prop("string", "For accessories: only this room."),

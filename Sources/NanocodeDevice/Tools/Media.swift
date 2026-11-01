@@ -9,7 +9,7 @@ extension DeviceKit {
 
   static let music = HostTool(
     name: "music",
-    description: "The media library on this iPhone (music, podcasts and audiobooks synced or added from Apple Music) and the Music app's player. search: songs whose title, artist or album matches. albums, artists, playlists, podcasts, audiobooks list collections (filtered by query). play: songs that match a query, or a playlist, album or artist by name, or items by id (shuffle optional). queue_next and queue_last add to the queue. pause, resume, stop, next, previous, restart, seek (seconds), shuffle (off, songs, albums), repeat (none, one, all), now_playing (with position and state). The system volume can't be set by apps.",
+    description: "The media library on this \(DeviceTools.here) (music, podcasts and audiobooks synced or added from Apple Music) and the Music app's player. search: songs whose title, artist or album matches. albums, artists, playlists, podcasts, audiobooks list collections (filtered by query). play: songs that match a query, or a playlist, album or artist by name, or items by id (shuffle optional). queue_next and queue_last add to the queue. pause, resume, stop, next, previous, restart, seek (seconds), shuffle (off, songs, albums), repeat (none, one, all), now_playing (with position and state). The system volume can't be set by apps.",
     parameters: schema(musicActions, paged([
       "query": prop("string"),
       "playlist": prop("string", "For play: a playlist's name."),

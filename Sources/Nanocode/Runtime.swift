@@ -403,10 +403,7 @@ public final class NanocodeRuntime: @unchecked Sendable {
     let handle = data.withUnsafeBytes { buffer in
       nanocode_start(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, callback, context)
     }
-    guard let handle else {
-      Unmanaged<Router>.fromOpaque(context).release()
-      throw NanocodeError("the nanocode runtime did not start")
-    }
+    guard let handle else { throw NanocodeError("the nanocode runtime did not start") }
     let pointer = Pointer(raw: handle)
     router.state.withLock { $0.handle = pointer }
   }

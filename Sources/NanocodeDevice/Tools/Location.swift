@@ -221,7 +221,7 @@ extension DeviceKit {
 
 public actor Geofences {
   public static let shared = Geofences()
-  static let name = "personal.geofences"
+  static let name = "NanocodeGeofences"
   static let fencesKey = "PhoneGeofences"
   static let historyKey = "PhoneGeofenceEvents"
   static let historyKept = 500

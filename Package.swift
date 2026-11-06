@@ -5,6 +5,7 @@ import PackageDescription
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let local = root.appendingPathComponent("build/NanocodeFFI.xcframework")
 let release = (try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("ffi-release.json")))) as? [String: String]
+let withFFI = ProcessInfo.processInfo.environment["NANOCODE_WITHOUT_FFI"] == nil
 
 let ffi: Target = if FileManager.default.fileExists(atPath: local.path) || release == nil {
   .binaryTarget(name: "NanocodeFFI", path: "build/NanocodeFFI.xcframework")
@@ -12,35 +13,52 @@ let ffi: Target = if FileManager.default.fileExists(atPath: local.path) || relea
   .binaryTarget(name: "NanocodeFFI", url: release!["url"]!, checksum: release!["checksum"]!)
 }
 
+let plain: [Target] = [
+  .target(name: "NanocodeCore"),
+  .target(name: "NanocodeViews", dependencies: ["NanocodeCore"]),
+  .target(
+    name: "NanocodeComputer",
+    swiftSettings: [.swiftLanguageMode(.v5)],
+    linkerSettings: [
+      .linkedFramework("AppKit", .when(platforms: [.macOS])),
+      .linkedFramework("ApplicationServices", .when(platforms: [.macOS])),
+      .linkedFramework("ScreenCaptureKit", .when(platforms: [.macOS])),
+      .linkedFramework("JavaScriptCore", .when(platforms: [.macOS])),
+    ]
+  ),
+]
+
+let linked: [Target] = [
+  ffi,
+  .target(
+    name: "Nanocode",
+    dependencies: ["NanocodeCore", "NanocodeFFI"],
+    resources: [.copy("Resources/python.js"), .copy("Resources/pyodide-host.js"), .copy("Resources/shell")],
+    linkerSettings: [
+      .linkedFramework("Security"),
+      .linkedFramework("SystemConfiguration"),
+      .linkedFramework("CoreFoundation"),
+      .linkedLibrary("resolv"),
+      .linkedFramework("WebKit"),
+    ]
+  ),
+  .target(name: "NanocodeKit", dependencies: ["NanocodeCore", "Nanocode"]),
+  .target(name: "NanocodeDevice", dependencies: ["Nanocode"]),
+  .target(name: "NanocodeDeviceCompose", dependencies: ["Nanocode", "NanocodeDevice"]),
+]
+
 let package = Package(
   name: "Nanocode",
   platforms: [.macOS(.v14), .iOS(.v17)],
   products: [
     .library(name: "NanocodeCore", targets: ["NanocodeCore"]),
     .library(name: "NanocodeViews", targets: ["NanocodeViews"]),
+    .library(name: "NanocodeComputer", targets: ["NanocodeComputer"]),
+  ] + (withFFI ? [
     .library(name: "Nanocode", targets: ["Nanocode"]),
     .library(name: "NanocodeKit", targets: ["NanocodeKit"]),
     .library(name: "NanocodeDevice", targets: ["NanocodeDevice"]),
     .library(name: "NanocodeDeviceCompose", targets: ["NanocodeDeviceCompose"]),
-  ],
-  targets: [
-    ffi,
-    .target(name: "NanocodeCore"),
-    .target(name: "NanocodeViews", dependencies: ["NanocodeCore"]),
-    .target(
-      name: "Nanocode",
-      dependencies: ["NanocodeCore", "NanocodeFFI"],
-      resources: [.copy("Resources/python.js"), .copy("Resources/pyodide-host.js"), .copy("Resources/shell")],
-      linkerSettings: [
-        .linkedFramework("Security"),
-        .linkedFramework("SystemConfiguration"),
-        .linkedFramework("CoreFoundation"),
-        .linkedLibrary("resolv"),
-        .linkedFramework("WebKit"),
-      ]
-    ),
-    .target(name: "NanocodeKit", dependencies: ["NanocodeCore", "Nanocode"]),
-    .target(name: "NanocodeDevice", dependencies: ["Nanocode"]),
-    .target(name: "NanocodeDeviceCompose", dependencies: ["Nanocode", "NanocodeDevice"]),
-  ]
+  ] : []),
+  targets: plain + (withFFI ? linked : [])
 )

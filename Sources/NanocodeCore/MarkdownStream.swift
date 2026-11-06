@@ -30,15 +30,15 @@ public enum MarkdownStream {
     guard let m = regex(pattern).firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
     return (0..<m.numberOfRanges).map { m.range(at: $0).location == NSNotFound ? nil : ns.substring(with: m.range(at: $0)) }
   }
-  static func test(_ pattern: String, _ text: String?) -> Bool { text.map { match(pattern, $0) != nil } ?? false }
+  public static func test(_ pattern: String, _ text: String?) -> Bool { text.map { match(pattern, $0) != nil } ?? false }
 
   static func trimEnd(_ text: String) -> String {
     var t = Substring(text)
     while let last = t.last, last.isWhitespace { t.removeLast() }
     return String(t)
   }
-  static func lines(_ text: String) -> [String] { text.components(separatedBy: "\n") }
-  static func fences(_ lines: [String]) -> (code: [Bool], open: Bool) {
+  public static func lines(_ text: String) -> [String] { text.components(separatedBy: "\n") }
+  public static func fences(_ lines: [String]) -> (code: [Bool], open: Bool) {
     var code: [Bool] = []
     var fence: String?
     for line in lines {
@@ -227,5 +227,31 @@ public enum MarkdownStream {
       blocks[blocks.count - 1].append(line)
     }
     return blocks.map { $0.joined(separator: "\n") }
+  }
+}
+
+public final class StreamingBlocks {
+  private var text = ""
+  private var raw: [String] = []
+
+  public init() {}
+
+  public func blocks(_ next: String, healed: Bool) -> [String] {
+    split(next)
+    guard healed, let last = raw.last else { return raw }
+    let healedLast = MarkdownStream.complete(last)
+    return healedLast.isEmpty ? Array(raw.dropLast()) : raw.dropLast() + [healedLast]
+  }
+
+  private func split(_ next: String) {
+    defer { text = next }
+    if next == text { return }
+    guard raw.count > 2, next.hasPrefix(text) else { raw = MarkdownStream.blocks(next); return }
+    let keep = raw.count - 2
+    let offset = raw[..<keep].reduce(0) { $0 + $1.utf16.count } + keep
+    let units = next.utf16
+    guard offset <= units.count, let tail = String(units[units.index(units.startIndex, offsetBy: offset)...]),
+          !MarkdownStream.test(#"(?m)^ {0,3}\[[^\]]+\]:"#, tail) else { raw = MarkdownStream.blocks(next); return }
+    raw = Array(raw[..<keep]) + MarkdownStream.blocks(tail)
   }
 }

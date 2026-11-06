@@ -55,8 +55,9 @@ await chat.send("What device am I on?")
 | `NanocodeKit` | Native AppKit (macOS) and UIKit (iOS) UI from one source: `CloneViewController` with the ChatGPT and Claude skins of nanocode-ts's clone apps, and `NanocodeChatViewController` for a conversation in your own window. |
 | `NanocodeCore` | Plain Swift, no Rust: events, the paced `Transcript`, tool cells, turns, the markdown parser and syntax highlighter, for apps that render nanocode events they receive some other way. |
 | `NanocodeViews` | SwiftUI views over `NanocodeCore`, for SwiftUI hosts. |
+| `NanocodeComputer` | macOS computer use over Accessibility and ScreenCaptureKit, served as an MCP server on stdio from inside your app, so the app's own permissions cover it. No Rust. |
 
-`Package.swift` downloads the prebuilt `NanocodeFFI` XCFramework that `ffi-release.json` names, so depending on the package builds no Rust.
+`Package.swift` downloads the prebuilt `NanocodeFFI` XCFramework that `ffi-release.json` names, so depending on the package builds no Rust. An app that uses only `NanocodeCore`, `NanocodeViews` or `NanocodeComputer` sets `NANOCODE_WITHOUT_FFI=1` where it resolves packages, and SwiftPM leaves the XCFramework out instead of downloading it.
 
 ## Quickstart
 

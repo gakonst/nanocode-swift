@@ -43,6 +43,8 @@ public enum HandState: Sendable, Hashable {
     case "connecting", "listening": self = .connecting
     case "connected": self = .connected(endpoint: event["endpoint"]?.string ?? "")
     case "brain_connected": self = .connected(endpoint: event["peer"]?.string ?? "")
+    case "moving": self = .connected(endpoint: event["endpoint"]?.string ?? "")
+    case "unconfirmed": self = .retrying(delayMs: event["retry_ms"]?.number ?? 0)
     case "disconnected": self = .disconnected(reason: event["reason"]?.string ?? "")
     case "retrying": self = .retrying(delayMs: event["delay_ms"]?.number ?? 0)
     case "revoked": self = .stopped(error: "The brain revoked this hand.")

@@ -120,7 +120,13 @@ pub fn workspace_tools(
 fn event(event: HandEvent) -> Value {
     match event {
         HandEvent::Connecting { endpoint } => json!({"state": "connecting", "endpoint": endpoint}),
-        HandEvent::Connected { endpoint } => json!({"state": "connected", "endpoint": endpoint}),
+        HandEvent::Connected { endpoint, dialed } => {
+            json!({"state": "connected", "endpoint": endpoint, "dial_ms": dialed.total().as_millis()})
+        }
+        HandEvent::Moving { endpoint } => json!({"state": "moving", "endpoint": endpoint}),
+        HandEvent::Unconfirmed { status, retry } => {
+            json!({"state": "unconfirmed", "status": status, "retry_ms": retry.as_millis()})
+        }
         HandEvent::Listening { endpoint } => json!({"state": "listening", "endpoint": endpoint}),
         HandEvent::BrainConnected { peer } => {
             json!({"state": "brain_connected", "peer": peer.to_string()})

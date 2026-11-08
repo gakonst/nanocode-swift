@@ -139,7 +139,16 @@ var NanocodePython = (function(exports) {
 		return wellFormed(text) ? text : decode(encode(text));
 	}
 	// src/bash/internal/Syntax.ts
-	var SyntaxError = class extends Error {};
+	var SyntaxError = class extends Error {
+		line;
+		context;
+		complete = 0;
+		constructor(message, line = 1, context) {
+			super(message);
+			this.line = line;
+			this.context = context;
+		}
+	};
 	const sources = /* @__PURE__ */ new WeakMap();
 	const texts = /* @__PURE__ */ new WeakMap();
 	const heredocs = /* @__PURE__ */ new WeakMap();
@@ -160,16 +169,34 @@ var NanocodePython = (function(exports) {
 	const SPECIAL = "@*#?$!-0";
 	function parse(source) {
 		const parser = new Parser(source);
-		const script = parser.list(/* @__PURE__ */ new Set());
-		parser.blanks();
-		if (!parser.done()) throw new SyntaxError("syntax error near unexpected token `" + parser.peekToken() + "'");
-		return script;
+		try {
+			const script = parser.list(/* @__PURE__ */ new Set());
+			parser.blanks();
+			if (!parser.done()) parser.fail();
+			return script;
+		} catch (error) {
+			if (error instanceof SyntaxError) error.complete = parser.complete;
+			throw error;
+		}
+	}
+	function parseLines(source) {
+		try {
+			return { script: parse(source) };
+		} catch (error) {
+			if (!(error instanceof SyntaxError)) throw error;
+			return {
+				script: error.complete ? parse(source.slice(0, error.complete)) : [],
+				error
+			};
+		}
 	}
 	var Parser = class Parser {
 		src;
 		pos = 0;
 		pending = [];
 		edits = [];
+		complete = 0;
+		#depth = 0;
 		#linePos = 0;
 		#line = 1;
 		constructor(src) {
@@ -190,8 +217,20 @@ var NanocodePython = (function(exports) {
 		peekToken() {
 			return this.src.slice(this.pos).match(/^(;;|&&|\|\||[;&|()<>\n]|[^\s;&|()<>]+)/)?.[0].replace("\n", "newline") ?? "EOF";
 		}
-		fail() {
-			throw new SyntaxError(this.done() ? "syntax error: unexpected end of file" : "syntax error near unexpected token `" + this.peekToken() + "'");
+		fail(token) {
+			if (this.done() && token === void 0) throw new SyntaxError("syntax error: unexpected end of file", this.end());
+			const start = this.src.lastIndexOf("\n", this.pos - 1) + 1;
+			const end = this.src.indexOf("\n", this.pos);
+			throw new SyntaxError("syntax error near unexpected token `" + (token ?? this.peekToken()) + "'", this.line(), this.src.slice(start, end < 0 ? void 0 : end));
+		}
+		end() {
+			return this.src.replace(/\n$/, "").split("\n").length + 1;
+		}
+		unmatched(close, line) {
+			throw new SyntaxError("unexpected EOF while looking for matching `" + close + "'", line);
+		}
+		lineOf(pos) {
+			return this.src.slice(0, pos).split("\n").length;
 		}
 		blanks() {
 			for (;;) {
@@ -249,8 +288,14 @@ var NanocodePython = (function(exports) {
 			if (this.reserved() !== word) this.fail();
 			this.pos += word.length;
 		}
+		body(stop) {
+			const script = this.list(stop);
+			if (!script.length) this.fail();
+			return script;
+		}
 		list(stop) {
 			const script = [];
+			this.#depth++;
 			for (;;) {
 				this.separators();
 				if (this.done() || this.starts(")") || this.starts(";;") || this.starts(";&")) break;
@@ -270,8 +315,10 @@ var NanocodePython = (function(exports) {
 				else if (c === "\n") {
 					newlines.add(item);
 					this.newline();
+					if (this.#depth === 1) this.complete = this.pos;
 				} else break;
 			}
+			this.#depth--;
 			return script;
 		}
 		andOr() {
@@ -365,7 +412,7 @@ var NanocodePython = (function(exports) {
 			else if (word === "case") command = this.caseCommand();
 			else if (word === "{") {
 				this.pos++;
-				const body = this.list(/* @__PURE__ */ new Set());
+				const body = this.body(/* @__PURE__ */ new Set());
 				this.eat("}");
 				command = {
 					type: "group",
@@ -384,7 +431,7 @@ var NanocodePython = (function(exports) {
 				texts.set(command, text);
 			} else if (this.starts("(")) {
 				this.pos++;
-				const body = this.list(/* @__PURE__ */ new Set());
+				const body = this.body(/* @__PURE__ */ new Set());
 				this.separators();
 				if (!this.starts(")")) this.fail();
 				this.pos++;
@@ -451,9 +498,9 @@ var NanocodePython = (function(exports) {
 			const clauses = [];
 			let otherwise;
 			for (;;) {
-				const cond = this.list(/* @__PURE__ */ new Set());
+				const cond = this.body(/* @__PURE__ */ new Set());
 				this.eat("then");
-				const body = this.list(/* @__PURE__ */ new Set());
+				const body = this.body(/* @__PURE__ */ new Set());
 				clauses.push({
 					cond,
 					body
@@ -466,7 +513,7 @@ var NanocodePython = (function(exports) {
 				}
 				if (next === "else") {
 					this.pos += 4;
-					otherwise = this.list(/* @__PURE__ */ new Set());
+					otherwise = this.body(/* @__PURE__ */ new Set());
 				}
 				this.eat("fi");
 				return {
@@ -481,7 +528,7 @@ var NanocodePython = (function(exports) {
 			this.separators();
 			if (this.starts(";")) this.pos++;
 			this.eat("do");
-			const body = this.list(/* @__PURE__ */ new Set());
+			const body = this.body(/* @__PURE__ */ new Set());
 			this.eat("done");
 			return body;
 		}
@@ -531,7 +578,7 @@ var NanocodePython = (function(exports) {
 		}
 		whileCommand(word) {
 			this.pos += word.length;
-			const cond = this.list(/* @__PURE__ */ new Set(["do"]));
+			const cond = this.body(/* @__PURE__ */ new Set(["do"]));
 			return {
 				type: "while",
 				until: word === "until",
@@ -717,7 +764,7 @@ var NanocodePython = (function(exports) {
 			if (match[2] === ">|") forced.add(redirect);
 			if (match[2] === "<<" || match[2] === "<<-") {
 				const raw = this.src.slice(this.pos).match(/^[^\s;&|()<>]+/)?.[0];
-				if (!raw) this.fail();
+				if (!raw) this.fail(this.done() ? "newline" : void 0);
 				this.pos += raw.length;
 				const expand = !/['"\\]/.test(raw);
 				this.pending.push({
@@ -727,7 +774,7 @@ var NanocodePython = (function(exports) {
 					expand
 				});
 			} else {
-				if (!(this.starts("<(") || this.starts(">(")) && (this.done() || META.includes(this.src[this.pos]))) this.fail();
+				if (!(this.starts("<(") || this.starts(">(")) && (this.done() || META.includes(this.src[this.pos]))) this.fail(this.done() ? "newline" : void 0);
 				redirect.target = this.word();
 			}
 			redirects.push(redirect);
@@ -786,14 +833,14 @@ var NanocodePython = (function(exports) {
 					}
 				} else if (c === "'") {
 					const end = this.src.indexOf("'", this.pos + 1);
-					if (end < 0) throw new SyntaxError("unexpected EOF while looking for matching `''");
+					if (end < 0) this.unmatched("'", this.lineOf(this.pos));
 					push(parts, this.src.slice(this.pos + 1, end), true);
 					this.pos = end + 1;
 				} else if (c === "\"") {
-					this.pos++;
+					const start = this.pos++;
 					push(parts, "", true);
 					this.double(parts, "\"");
-					if (this.src[this.pos] !== "\"") throw new SyntaxError("unexpected EOF while looking for matching `\"'");
+					if (this.src[this.pos] !== "\"") this.unmatched("\"", this.lineOf(start));
 					this.pos++;
 				} else if (c === "$" && this.src[this.pos + 1] === "'") {
 					const start = this.pos;
@@ -847,13 +894,13 @@ var NanocodePython = (function(exports) {
 		}
 		dollar(quoted) {
 			if (this.src[this.pos] === "`") {
-				this.pos++;
+				const start = this.pos++;
 				let inner = "";
 				while (!this.done() && this.src[this.pos] !== "`") if (this.src[this.pos] === "\\" && "$`\\".includes(this.src[this.pos + 1])) {
 					inner += this.src[this.pos + 1];
 					this.pos += 2;
 				} else inner += this.src[this.pos++];
-				if (this.done()) this.fail();
+				if (this.done()) this.unmatched("`", this.lineOf(start));
 				this.pos++;
 				return {
 					type: "command",
@@ -883,6 +930,7 @@ var NanocodePython = (function(exports) {
 				const body = this.list(/* @__PURE__ */ new Set());
 				this.separators();
 				this.pending = outer;
+				if (this.done()) this.unmatched(")", this.end());
 				if (!this.starts(")")) this.fail();
 				this.pos++;
 				this.edits.push({
@@ -903,6 +951,7 @@ var NanocodePython = (function(exports) {
 				} catch (error) {
 					if (!(error instanceof SyntaxError)) throw error;
 					const end = this.closing(start);
+					if (end < 0 && this.done()) this.unmatched("}", this.lineOf(start));
 					if (end < 0) throw error;
 					this.pos = end + 1;
 					return {
@@ -1594,7 +1643,14 @@ var NanocodePython = (function(exports) {
 	const NAME = /[A-Za-z_][A-Za-z0-9_]*/y;
 	const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 	const CACHE = /* @__PURE__ */ new Map();
-	var ArithError = class extends Error {};
+	var ArithError = class extends Error {
+		located = false;
+	};
+	function located(token, message) {
+		const error = new ArithError(token + ": " + message + " (error token is \"" + token + "\")");
+		error.located = true;
+		return error;
+	}
 	function normal(value) {
 		const wrapped = BigInt.asIntN(64, value);
 		return wrapped >= -SAFE && wrapped <= SAFE ? Number(wrapped) : wrapped;
@@ -1603,12 +1659,12 @@ var NanocodePython = (function(exports) {
 		return typeof value === "bigint" ? value : BigInt(value);
 	}
 	function digits(text, base, token) {
-		if (base < 2 || base > 64) throw new ArithError("invalid arithmetic base (error token is \"" + token + "\")");
+		if (base < 2 || base > 64) throw located(token, "invalid arithmetic base");
 		let value = 0;
 		for (const c of text) {
 			const code = c.charCodeAt(0);
 			const digit = code >= 48 && code <= 57 ? code - 48 : code >= 97 && code <= 122 ? code - 87 : code >= 65 && code <= 90 ? base <= 36 ? code - 55 : code - 29 : c === "@" ? 62 : c === "_" ? 63 : 64;
-			if (digit >= base) throw new ArithError("value too great for base (error token is \"" + token + "\")");
+			if (digit >= base) throw located(token, "value too great for base");
 			if (typeof value === "number") {
 				const next = value * base + digit;
 				value = next <= Number.MAX_SAFE_INTEGER ? next : BigInt(value) * BigInt(base) + BigInt(digit);
@@ -1617,14 +1673,11 @@ var NanocodePython = (function(exports) {
 		return typeof value === "bigint" ? normal(value) : value;
 	}
 	function literal(text) {
-		if (/^0[xX]/.test(text)) {
-			if (text.length === 2) throw new ArithError("invalid number (error token is \"" + text + "\")");
-			return digits(text.slice(2), 16, text);
-		}
+		if (/^0[xX]/.test(text)) return digits(text.slice(2), 16, text);
 		const hash = text.indexOf("#");
 		if (hash > 0) {
 			const base = Number(text.slice(0, hash));
-			if (hash === text.length - 1) throw new ArithError("invalid number (error token is \"" + text + "\")");
+			if (hash === text.length - 1) throw located(text, "invalid number");
 			return digits(text.slice(hash + 1), base, text);
 		}
 		if (text.length > 1 && text[0] === "0") return digits(text.slice(1), 8, text);
@@ -1647,7 +1700,8 @@ var NanocodePython = (function(exports) {
 				const text = NUMBER.exec(source)[0];
 				tokens.push({
 					kind: "num",
-					value: literal(text)
+					value: literal(text),
+					at: i
 				});
 				i += text.length;
 				continue;
@@ -1657,7 +1711,8 @@ var NanocodePython = (function(exports) {
 				const name = NAME.exec(source)[0];
 				tokens.push({
 					kind: "name",
-					value: name
+					value: name,
+					at: i
 				});
 				i += name.length;
 				continue;
@@ -1666,7 +1721,8 @@ var NanocodePython = (function(exports) {
 			if (!op) throw new ArithError("syntax error: invalid arithmetic operator (error token is \"" + source.slice(i) + "\")");
 			tokens.push({
 				kind: "op",
-				value: op
+				value: op,
+				at: i
 			});
 			i += op.length;
 		}
@@ -1696,7 +1752,7 @@ var NanocodePython = (function(exports) {
 		"**": 11
 	};
 	function power(base, exponent) {
-		if (exponent < 0) throw new ArithError("exponent less than 0 (error token is \"" + String(exponent) + "\")");
+		if (exponent < 0) throw new ArithError("exponent less than 0");
 		if (typeof base === "number" && typeof exponent === "number") {
 			const result = base ** exponent;
 			if (Number.isSafeInteger(result)) return result;
@@ -1739,7 +1795,7 @@ var NanocodePython = (function(exports) {
 			case "%":
 				if (b == 0) {
 					if (!run) return 0;
-					throw new ArithError("division by 0 (error token is \"" + String(b) + "\")");
+					throw new ArithError("division by 0");
 				}
 				if (small) {
 					const rest = a % b;
@@ -1787,15 +1843,16 @@ var NanocodePython = (function(exports) {
 	}
 	function evaluateArith(source, scope, depth = 0) {
 		if (depth > 32) throw new ArithError("expression recursion level exceeded");
-		const tokens = tokenize(source);
+		let tokens = [];
 		let pos = 0;
+		const rest = (at) => source.slice(tokens[at]?.at ?? source.length);
 		const peek = () => tokens[pos];
 		const isOp = (value) => {
 			const token = tokens[pos];
 			return token !== void 0 && token.kind === "op" && token.value === value;
 		};
 		const expect = (value) => {
-			if (!isOp(value)) throw new ArithError("syntax error in expression (error token is \"" + (peek() ? String(peek().value) : "") + "\")");
+			if (!isOp(value)) throw new ArithError("syntax error in expression (error token is \"" + rest(pos) + "\")");
 			pos++;
 		};
 		const variable = (name, index) => {
@@ -1844,7 +1901,8 @@ var NanocodePython = (function(exports) {
 			if (!isOp("?")) return cond;
 			pos++;
 			const yes = comma(run && cond != 0);
-			expect(":");
+			if (!isOp(":")) throw new ArithError("`:' expected for conditional expression");
+			pos++;
 			const no = assign(run && cond == 0);
 			return cond != 0 ? yes : no;
 		}
@@ -1899,7 +1957,7 @@ var NanocodePython = (function(exports) {
 			pos++;
 			if (token.kind === "num") return token.value;
 			if (token.kind === "op") {
-				if (token.value !== "(") throw new ArithError("syntax error: operand expected (error token is \"" + token.value + "\")");
+				if (token.value !== "(") throw new ArithError("syntax error: operand expected");
 				const value = comma(run);
 				expect(")");
 				return value;
@@ -1912,10 +1970,21 @@ var NanocodePython = (function(exports) {
 			}
 			return value;
 		}
-		if (!tokens.length) return 0;
-		const value = comma(true);
-		if (pos < tokens.length) throw new ArithError("syntax error in expression (error token is \"" + String(tokens[pos].value) + "\")");
-		return value;
+		function evaluate() {
+			if (!tokens.length) return 0;
+			const value = comma(true);
+			if (pos < tokens.length) throw new ArithError((ASSIGN.has(String(tokens[pos].value)) ? "attempted assignment to non-variable" : "syntax error in expression") + " (error token is \"" + rest(pos) + "\")");
+			return value;
+		}
+		try {
+			tokens = tokenize(source);
+			return evaluate();
+		} catch (error) {
+			if (!(error instanceof ArithError) || error.located) throw error;
+			error.located = true;
+			error.message = source.trimStart() + ": " + error.message + (error.message.includes("(error token is") ? "" : " (error token is \"" + rest(pos - 1) + "\")");
+			throw error;
+		}
 	}
 	// src/bash/internal/Text.ts
 	const CLASSES = {
@@ -1933,7 +2002,44 @@ var NanocodePython = (function(exports) {
 		print: "\\x20-\\x7e",
 		graph: "\\x21-\\x7e"
 	};
-	function bracket$1(pattern, start, shell) {
+	const UNICODE = {
+		alpha: "(?![0-9])[\\p{Alphabetic}\\p{Nd}]",
+		alnum: "[\\p{Alphabetic}\\p{Nd}]",
+		upper: "[\\p{Uppercase}\\p{Lt}]",
+		lower: "[\\p{Lowercase}\\p{Lt}]",
+		space: "(?![\\u0085\\u00a0\\u2007\\u202f])\\p{White_Space}",
+		blank: "(?![\\u00a0\\u2007\\u202f])[\\t\\p{Zs}]",
+		punct: "(?![\\p{Alphabetic}\\p{Nd}])(?:[^\\p{Cc}\\p{Cs}\\p{Cn}\\p{Z}]|[\\u00a0\\u2007\\u202f])",
+		print: "[^\\p{Cc}\\p{Cs}\\p{Cn}\\p{Zl}\\p{Zp}]",
+		graph: "[^\\p{Cc}\\p{Cs}\\p{Cn}\\p{Z}]|[\\u00a0\\u2007\\u202f]",
+		word: "[\\p{Alphabetic}\\p{Nd}_]",
+		rust: "[\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\p{Join_Control}]",
+		decimal: "\\p{Nd}",
+		white: "\\p{White_Space}"
+	};
+	const unicodeClasses = /* @__PURE__ */ new Map();
+	function unicodeClass(name) {
+		const known = unicodeClasses.get(name);
+		if (known !== void 0) return known;
+		const hex = (code) => "\\u" + code.toString(16).padStart(4, "0");
+		let plane = "";
+		for (let code = 0; code < 65536; code++) if (code < 55296 || code > 57343) plane += String.fromCharCode(code);
+		let out = "";
+		let from = -1;
+		let to = -2;
+		for (const match of plane.matchAll(new RegExp(UNICODE[name], "gu"))) {
+			const code = match[0].charCodeAt(0);
+			if (code === to + 1) to = code;
+			else {
+				if (from >= 0) out += hex(from) + (to > from ? "-" + hex(to) : "");
+				from = to = code;
+			}
+		}
+		if (from >= 0) out += hex(from) + (to > from ? "-" + hex(to) : "");
+		unicodeClasses.set(name, out);
+		return out;
+	}
+	function bracket$1(pattern, start, shell, unicode = false) {
 		let i = start + 1;
 		let out = "[";
 		if (pattern[i] === "!" || pattern[i] === "^") {
@@ -1948,7 +2054,8 @@ var NanocodePython = (function(exports) {
 			if (c === "[" && pattern[i + 1] === ":") {
 				const end = pattern.indexOf(":]", i + 2);
 				if (end > 0) {
-					out += CLASSES[pattern.slice(i + 2, end)] ?? "";
+					const name = pattern.slice(i + 2, end);
+					out += (unicode && name in UNICODE ? unicodeClass(name) : CLASSES[name]) ?? "";
 					i = end + 2;
 					continue;
 				}
@@ -1963,7 +2070,7 @@ var NanocodePython = (function(exports) {
 		}
 	}
 	function escapeRegExp(text) {
-		return text.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+		return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 	}
 	function globSource(pattern, path = false) {
 		let out = "";
@@ -1985,33 +2092,86 @@ var NanocodePython = (function(exports) {
 	function globRegExp(pattern, flags = "") {
 		return new RegExp("^" + globSource(pattern) + "$", flags);
 	}
-	function posixRegExp(pattern, extended, flags = "") {
+	function boundary(kind, word, blocked = word) {
+		const after = "(?=[" + word + "])";
+		const before = "(?<=[" + word + "])";
+		const start = "(?<![" + blocked + "])" + after;
+		const end = before + "(?![" + blocked + "])";
+		if (kind === "<") return start;
+		if (kind === ">") return end;
+		if (kind === "b") return "(?:" + start + "|" + end + ")";
+		return "(?:" + before + after + "|(?<![" + blocked + "])(?![" + blocked + "]))";
+	}
+	function posixRegExp(pattern, extended, flags = "", warnings) {
 		let out = "";
+		let atom = -1;
+		let anchor = false;
+		let repeated = false;
+		let start = true;
+		const groups = [];
+		const emit = (text, zero = false) => {
+			atom = out.length;
+			out += text;
+			anchor = zero;
+			repeated = false;
+			start &&= zero;
+		};
+		const alternate = (text) => {
+			if (text === "(") groups.push(out.length);
+			out += text;
+			atom = -1;
+			anchor = repeated = false;
+			start = true;
+		};
+		const close = () => {
+			atom = groups.pop() ?? -1;
+			out += ")";
+			anchor = repeated = start = false;
+		};
+		const repeat = (quantifier, name) => {
+			if (start && warnings && extended) {
+				warnings.push(name + " at start of expression");
+				if (atom < 0) return;
+			} else if (start && (!extended || name === "*")) return emit(escapeRegExp(name));
+			if (atom >= 0 && (repeated || anchor)) out = out.slice(0, atom) + "(?:" + out.slice(atom) + ")";
+			out += quantifier;
+			repeated = true;
+			anchor = false;
+		};
+		const interval = (from, end) => {
+			const match = /^(\d*)(,\d*)?/.exec(pattern.slice(from));
+			if (!match[1] && !match[2] || !pattern.startsWith(end, from + match[0].length)) return;
+			return ["{" + (match[1] || "0") + (match[2] ?? "") + "}", from + match[0].length + end.length - 1];
+		};
 		for (let i = 0; i < pattern.length; i++) {
 			const c = pattern[i];
-			if (c === "\\" && i + 1 < pattern.length) {
+			const bounds = c === "{" && extended ? interval(i + 1, "}") : c === "\\" && pattern[i + 1] === "{" && !extended && !start ? interval(i + 2, "\\}") : void 0;
+			if (bounds) {
+				repeat(bounds[0], "{...}");
+				i = bounds[1];
+			} else if (c === "\\" && i + 1 < pattern.length) {
 				const n = pattern[++i];
-				if (n === "<" || n === ">") out += "\\b";
-				else if (!extended && "(){}+?|".includes(n)) out += n;
-				else if (/[wWsSbBdD1-9]/.test(n)) out += "\\" + n;
-				else if (n === "n") out += "\\n";
-				else if (n === "t") out += "\\t";
-				else if (n === "r") out += "\\r";
-				else if (n === "f") out += "\\f";
-				else if (n === "v") out += "\\v";
-				else out += escapeRegExp(n);
+				if (warnings && "bB<>".includes(n)) emit(boundary(n, unicodeClass("word"), unicodeClass("word") + "\\udc80-\\udcff"), true);
+				else if (warnings && "wWsS".includes(n)) emit((n === "w" || n === "s" ? "[" : "[^") + unicodeClass(n === "w" || n === "W" ? "word" : "space") + "]");
+				else if (n === "<" || n === ">" || n === "b") emit("\\b", true);
+				else if (n === "B") emit("\\B", true);
+				else if (!extended && (n === "(" || n === "|")) alternate(n);
+				else if (!extended && n === ")") close();
+				else if (!extended && (n === "+" || n === "?")) repeat(n, n);
+				else if (/[wWsS1-9]/.test(n) || !warnings && /[dDntrfv]/.test(n)) emit("\\" + n);
+				else emit(escapeRegExp(n));
 			} else if (c === "[") {
-				const result = bracket$1(pattern, i, false);
+				const result = bracket$1(pattern, i, false, !!warnings);
 				if (result) {
-					out += result[0];
+					emit(result[0]);
 					i = result[1] - 1;
-				} else out += "\\[";
-			} else if (!extended && "(){}+?|".includes(c)) out += "\\" + c;
-			else if (c === "*" && (out === "" || out.endsWith("(") || out.endsWith("|") || out === "^")) out += "\\*";
-			else if (extended && c === "{" && !/^\{\d+(,\d*)?\}/.test(pattern.slice(i))) out += "\\{";
-			else if (extended && c === "}" && !/\{\d+(,\d*)?$/.test(out)) out += "\\}";
-			else if (c === "/") out += "\\/";
-			else out += c;
+				} else emit("\\[");
+			} else if (c === "*") repeat("*", "*");
+			else if (extended && (c === "+" || c === "?")) repeat(c, c);
+			else if (extended && (c === "(" || c === "|")) alternate(c);
+			else if (extended && c === ")") close();
+			else if ("(){}+?|/".includes(c)) emit("\\" + c);
+			else emit(c, c === "^" || c === "$");
 		}
 		return new RegExp(out, flags);
 	}
@@ -2077,7 +2237,7 @@ var NanocodePython = (function(exports) {
 			false
 		];
 	}
-	function escapes(text, format = false) {
+	function escapes$1(text, format = false) {
 		let out = "";
 		for (let i = 0; i < text.length; i++) {
 			if (text[i] !== "\\" || i + 1 >= text.length) {
@@ -2097,6 +2257,11 @@ var NanocodePython = (function(exports) {
 		constructor(message, status = 126) {
 			super(message);
 			this.status = status;
+		}
+	};
+	var MachineError = class extends LimitError {
+		constructor(message) {
+			super(message, 127);
 		}
 	};
 	function megabytes(bytes) {
@@ -2152,17 +2317,32 @@ var NanocodePython = (function(exports) {
 		#scan = 0;
 		#pipe;
 		#done = true;
-		constructor(text = "") {
-			this.#text = text;
+		#attached;
+		constructor(text) {
+			this.#text = text ?? "";
+			this.#attached = text !== void 0;
 		}
 		static pipe(pipe) {
 			const input = new Input();
 			input.#pipe = pipe;
 			input.#done = false;
+			input.#attached = true;
 			return input;
+		}
+		static machine() {
+			const input = new Input();
+			input.#machine = true;
+			return input;
+		}
+		#machine = false;
+		#check() {
+			if (this.#machine) throw new MachineError(unanswered("standard input"));
 		}
 		get ready() {
 			return this.#done;
+		}
+		get attached() {
+			return this.#attached;
 		}
 		#refuse(size) {
 			const pipe = this.#pipe;
@@ -2187,6 +2367,7 @@ var NanocodePython = (function(exports) {
 			return true;
 		}
 		async fill() {
+			this.#check();
 			if (this.#done || !this.#pipe) return;
 			const pipe = this.#pipe;
 			const cap = Math.min(pipe.limit * WHOLE_INPUT, pipe.memory);
@@ -2202,10 +2383,12 @@ var NanocodePython = (function(exports) {
 			this.#pos = this.#scan = 0;
 		}
 		async text() {
+			this.#check();
 			await this.fill();
 			return this.read();
 		}
 		async chunk() {
+			this.#check();
 			if (this.#pos >= this.#text.length && !await this.#more()) return null;
 			const text = this.#pos ? this.#text.slice(this.#pos) : this.#text;
 			this.#text = "";
@@ -2213,6 +2396,7 @@ var NanocodePython = (function(exports) {
 			return this.#pipe ? rejoin(text) : text;
 		}
 		async readLine(delimiter = "\n") {
+			this.#check();
 			const mark = delimiter === "" ? "\0" : delimiter;
 			for (;;) {
 				const end = this.#text.indexOf(mark, Math.max(this.#pos, this.#scan));
@@ -2237,6 +2421,7 @@ var NanocodePython = (function(exports) {
 			};
 		}
 		async readChars(count) {
+			this.#check();
 			while (this.#text.length - this.#pos < count && await this.#more());
 			return this.chars(count);
 		}
@@ -2249,12 +2434,14 @@ var NanocodePython = (function(exports) {
 			}
 		}
 		read() {
+			this.#check();
 			if (!this.#done) this.#pending();
 			const rest = this.#text.slice(this.#pos);
 			this.#pos = this.#text.length;
 			return rest;
 		}
 		line(delimiter = "\n") {
+			this.#check();
 			if (!this.#done) this.#pending();
 			if (this.#pos >= this.#text.length) return null;
 			const end = delimiter === "" ? this.#text.indexOf("\0", this.#pos) : this.#text.indexOf(delimiter, this.#pos);
@@ -2270,6 +2457,7 @@ var NanocodePython = (function(exports) {
 			};
 		}
 		chars(count) {
+			this.#check();
 			if (!this.#done && this.#text.length - this.#pos < count) this.#pending();
 			const text = this.#text.slice(this.#pos, this.#pos + count);
 			this.#pos += text.length;
@@ -2281,7 +2469,10 @@ var NanocodePython = (function(exports) {
 		STREAMS.add(handler);
 		return handler;
 	}
-	function shellQuote(value) {
+	function unanswered(what) {
+		return what + ": (this simulated shell has no answer for this machine's " + what + ")";
+	}
+	function shellQuote$1(value) {
 		if (/[\x00-\x1f\x7f]/.test(value)) return "$'" + value.replace(/[\\']/g, "\\$&").replace(/[\x00-\x1f\x7f]/g, (c) => ({
 			"\n": "\\n",
 			"	": "\\t",
@@ -2342,6 +2533,7 @@ var NanocodePython = (function(exports) {
 		}
 		return "/" + parts.join("/");
 	}
+	const SIGNAL_SPECS = /^(EXIT|ERR|DEBUG|RETURN|HUP|INT|QUIT|ILL|TRAP|ABRT|IOT|BUS|FPE|KILL|USR1|SEGV|USR2|PIPE|ALRM|TERM|STKFLT|CHLD|CONT|STOP|TSTP|TTIN|TTOU|URG|XCPU|XFSZ|VTALRM|PROF|WINCH|IO|POLL|PWR|SYS|RTMIN(\+\d+)?|RTMAX(-\d+)?|\d+)$/;
 	const SIGNAL_NUMBERS = {
 		HUP: 1,
 		INT: 2,
@@ -2398,6 +2590,42 @@ var NanocodePython = (function(exports) {
 		"history",
 		"times"
 	]);
+	const machineBuiltins = /* @__PURE__ */ new Set([
+		"alias",
+		"bg",
+		"dirs",
+		"disown",
+		"fg",
+		"hash",
+		"help",
+		"history",
+		"jobs",
+		"kill",
+		"popd",
+		"printenv",
+		"pushd",
+		"time",
+		"times",
+		"type",
+		"ulimit",
+		"umask",
+		"unalias",
+		"which"
+	]);
+	function machineBuiltin(name, args) {
+		if (machineBuiltins.has(name)) return true;
+		switch (name) {
+			case "command": return args[0]?.startsWith("-") ?? false;
+			case "env": {
+				let i = 0;
+				while (i < args.length && (args[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(args[i]))) i += args[i] === "-u" ? 2 : 1;
+				return i >= args.length;
+			}
+			case "set": return !args.length || args[args.length - 1] === "-o" || args[args.length - 1] === "+o";
+			case "shopt": return !args.some((arg) => /^-[a-z]*[qsu]/.test(arg));
+		}
+		return false;
+	}
 	const KEYWORDS = /* @__PURE__ */ new Set([
 		"if",
 		"then",
@@ -2446,7 +2674,7 @@ var NanocodePython = (function(exports) {
 			for (const id of ids) {
 				const job = this.job(id);
 				if (!job) {
-					io.stderr.write("bash: wait: " + (id.startsWith("%") ? id + ": no such job" : "pid " + id + " is not a child of this shell") + "\n");
+					io.stderr.write(this.prefix() + "wait: " + (id.startsWith("%") ? id + ": no such job" : "pid " + id + " is not a child of this shell") + "\n");
 					status = 127;
 					continue;
 				}
@@ -2456,6 +2684,9 @@ var NanocodePython = (function(exports) {
 			return status;
 		},
 		async jobs(args, io) {
+			const missing = args.filter((arg) => !arg.startsWith("-") && !this.job(arg));
+			for (const arg of missing) io.stderr.write(this.prefix() + "jobs: " + arg + ": no such job\n");
+			if (missing.length) return 1;
 			const pids = args.includes("-p");
 			const long = args.includes("-l");
 			const running = args.includes("-r");
@@ -2504,7 +2735,7 @@ var NanocodePython = (function(exports) {
 				if (job) {
 					if (job.status !== void 0) {
 						if (target.startsWith("%")) {
-							io.stderr.write("bash: kill: " + target + ": no such job\n");
+							io.stderr.write(this.prefix() + "kill: " + target + ": no such job\n");
 							status = 1;
 						}
 						continue;
@@ -2519,18 +2750,63 @@ var NanocodePython = (function(exports) {
 					throw new ExitSignal(128 + signal);
 				}
 				if (!/^-?\d+$/.test(target) && !target.startsWith("%")) {
-					io.stderr.write("bash: kill: " + target + ": arguments must be process or job IDs\n");
+					io.stderr.write(this.prefix() + "kill: " + target + ": arguments must be process or job IDs\n");
 					status = 1;
 					continue;
 				}
-				io.stderr.write("bash: kill: " + (target.startsWith("%") ? target + ": no such job" : "(" + target + ") - No such process") + "\n");
+				io.stderr.write(this.prefix() + "kill: " + (target.startsWith("%") ? target + ": no such job" : "(" + target + ") - No such process") + "\n");
 				status = 1;
 			}
 			return status;
 		},
-		alias: noop,
-		unalias: noop,
-		hash: noop,
+		async alias(args, io) {
+			let status = 0;
+			const names = args.filter((arg) => arg !== "-p");
+			if (!names.length) for (const [name, value] of [...this.state.aliases].sort()) io.stdout.write("alias " + name + "=" + shellQuote$1(value) + "\n");
+			for (const arg of names) {
+				const eq = arg.indexOf("=");
+				const value = this.state.aliases.get(arg);
+				if (eq > 0) this.state.aliases.set(arg.slice(0, eq), arg.slice(eq + 1));
+				else if (value !== void 0) io.stdout.write("alias " + arg + "=" + shellQuote$1(value) + "\n");
+				else {
+					io.stderr.write(this.prefix() + "alias: " + arg + ": not found\n");
+					status = 1;
+				}
+			}
+			return status;
+		},
+		async unalias(args, io) {
+			if (args.includes("-a")) {
+				this.state.aliases.clear();
+				return 0;
+			}
+			let status = 0;
+			for (const arg of args) {
+				if (this.state.aliases.delete(arg)) continue;
+				io.stderr.write(this.prefix() + "unalias: " + arg + ": not found\n");
+				status = 1;
+			}
+			return status;
+		},
+		async hash(args, io) {
+			let status = 0;
+			const names = args.filter((arg) => !arg.startsWith("-"));
+			if (!args.length) io.stdout.write("hash: hash table empty\n");
+			for (const name of names) {
+				if (BUILTINS[name] || this.state.functions.has(name) || this.host.commands.has(name)) continue;
+				io.stderr.write(this.prefix() + "hash: " + name + ": not found\n");
+				status = 1;
+			}
+			return status;
+		},
+		async fg(_args, io) {
+			io.stderr.write(this.prefix() + "fg: no job control\n");
+			return 1;
+		},
+		async bg(_args, io) {
+			io.stderr.write(this.prefix() + "bg: no job control\n");
+			return 1;
+		},
 		ulimit: noop,
 		async disown(args) {
 			const ids = args.filter((arg) => !arg.startsWith("-") || /^-\d/.test(arg));
@@ -2542,7 +2818,8 @@ var NanocodePython = (function(exports) {
 		},
 		async cd(args, io) {
 			const target = args.filter((arg) => arg !== "-P" && arg !== "-L")[0] ?? this.get("HOME") ?? "/";
-			const destination = target === "-" ? this.get("OLDPWD") ?? this.state.cwd : target;
+			const destination = target === "-" ? this.get("OLDPWD") : target;
+			if (destination === void 0) throw new CommandError("OLDPWD not set");
 			const logical = this.resolve(destination);
 			const stat = await this.host.fs.stat(logical);
 			if (!stat) throw new CommandError(target + ": No such file or directory");
@@ -2556,20 +2833,26 @@ var NanocodePython = (function(exports) {
 		},
 		async trap(args, io) {
 			if (!args.length || args[0] === "-p") {
-				for (const [signal, action] of this.state.traps) if (args.length < 2 || args.includes(signal)) io.stdout.write("trap -- " + shellQuote(action) + " " + signal + "\n");
+				for (const [signal, action] of this.state.traps) if (args.length < 2 || args.includes(signal)) io.stdout.write("trap -- " + shellQuote$1(action) + " " + (/^(EXIT|ERR|DEBUG|RETURN|\d+)$/.test(signal) ? signal : "SIG" + signal) + "\n");
 				return 0;
 			}
 			if (args[0] === "-l") return 0;
 			const rest = args[0] === "--" ? args.slice(1) : args;
 			const reset = rest.length === 1 || /^(-|\d+)$/.test(rest[0]) && rest[0] !== "0";
 			const action = reset ? "-" : rest[0];
+			let status = 0;
 			for (const raw of reset && rest[0] !== "-" ? rest : rest.slice(1)) {
 				let signal = raw.toUpperCase().replace(/^SIG/, "");
 				if (signal === "0") signal = "EXIT";
+				if (!SIGNAL_SPECS.test(signal) || Number(signal) > 64) {
+					io.stderr.write(this.prefix() + "trap: " + raw + ": invalid signal specification\n");
+					status = 1;
+					continue;
+				}
 				if (action === "-") this.state.traps.delete(signal);
 				else this.state.traps.set(signal, action);
 			}
-			return 0;
+			return status;
 		},
 		async shopt(args, io) {
 			let mode = "";
@@ -2621,7 +2904,7 @@ var NanocodePython = (function(exports) {
 			if (position < 0) {
 				this.set(name, "?");
 				if (silent) this.set("OPTARG", letter);
-				else io.stderr.write("bash: illegal option -- " + letter + "\n");
+				else io.stderr.write(this.state.arg0 + ": illegal option -- " + letter + "\n");
 			} else if (letters[position + 1] === ":") {
 				if (next < arg.length) {
 					this.set("OPTARG", arg.slice(next));
@@ -2634,7 +2917,7 @@ var NanocodePython = (function(exports) {
 					this.set(name, ":");
 					this.set("OPTARG", letter);
 				} else {
-					io.stderr.write("bash: option requires an argument -- " + letter + "\n");
+					io.stderr.write(this.state.arg0 + ": option requires an argument -- " + letter + "\n");
 					this.set(name, "?");
 				}
 				next = arg.length;
@@ -2731,14 +3014,18 @@ var NanocodePython = (function(exports) {
 			].filter((_, bit) => allowed >> (2 - index) * 3 & 4 >> bit).join("")).join(",") + "\n");
 			return 0;
 		},
-		async unset(args) {
+		async unset(args, io) {
 			let functions = false;
 			let refs = false;
+			let status = 0;
 			for (let arg of args) if (arg === "-f") functions = true;
 			else if (arg === "-v") functions = false;
 			else if (arg === "-n") refs = true;
 			else if (functions) this.state.functions.delete(arg);
-			else if (refs && this.state.refs.has(arg)) this.state.refs.delete(arg);
+			else if (!/^[A-Za-z_][A-Za-z0-9_]*(\[.*\])?$/.test(arg)) {
+				io.stderr.write(this.prefix() + "unset: `" + arg + "': not a valid identifier\n");
+				status = 1;
+			} else if (refs && this.state.refs.has(arg)) this.state.refs.delete(arg);
 			else {
 				arg = this.target(arg);
 				const element = arg.match(/^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]$/);
@@ -2764,7 +3051,7 @@ var NanocodePython = (function(exports) {
 				this.state.vars.delete(arg);
 				this.state.exported.delete(arg);
 			}
-			return 0;
+			return status;
 		},
 		async set(args, io) {
 			if (!args.length) {
@@ -2861,7 +3148,7 @@ var NanocodePython = (function(exports) {
 						const fd = Number(value());
 						const found = fd === 0 ? io.stdin : io.fds?.get(fd)?.input;
 						if (!found) {
-							io.stderr.write("bash: read: " + fd + ": invalid file descriptor: Bad file descriptor\n");
+							io.stderr.write(this.prefix() + "read: " + fd + ": invalid file descriptor: Bad file descriptor\n");
 							return 1;
 						}
 						source = found;
@@ -2921,7 +3208,7 @@ var NanocodePython = (function(exports) {
 					const fd = Number(args[++i]);
 					const found = fd === 0 ? io.stdin : io.fds?.get(fd)?.input;
 					if (!found) {
-						io.stderr.write("bash: mapfile: " + fd + ": invalid file descriptor: Bad file descriptor\n");
+						io.stderr.write(this.prefix() + "mapfile: " + fd + ": invalid file descriptor: Bad file descriptor\n");
 						return 1;
 					}
 					source = found;
@@ -2942,7 +3229,7 @@ var NanocodePython = (function(exports) {
 					if (await BUILTINS.eval.call(this, [
 						callback,
 						String(index),
-						shellQuote(value)
+						shellQuote$1(value)
 					], io) === 2) return 1;
 				}
 				values[index++] = value;
@@ -2953,18 +3240,15 @@ var NanocodePython = (function(exports) {
 			return 0;
 		},
 		async eval(args, io) {
-			const source = args.join(" ");
-			let script;
-			try {
-				script = parse(source);
-			} catch (error) {
-				if (!(error instanceof SyntaxError)) throw error;
-				io.stderr.write("bash: eval: " + error.message + "\n");
-				return 2;
-			}
+			const parsed = parseLines(args.join(" "));
+			const label = (this.state.vars.get("BASH_SOURCE")?.[0] ?? this.state.arg0) + ": eval";
+			const line = Number(this.get("LINENO") ?? "1") - 1;
 			this.enter();
 			try {
-				return await this.script(script, io);
+				const status = await this.script(parsed.script, io);
+				if (!parsed.error) return status;
+				io.stderr.write(syntax(parsed.error, label, line));
+				return 2;
 			} finally {
 				this.leave();
 			}
@@ -2976,13 +3260,25 @@ var NanocodePython = (function(exports) {
 		async exit(args) {
 			throw new ExitSignal(args.length ? count$1(args[0], 0) & 255 : this.state.status);
 		},
-		async return(args) {
+		async return(args, io) {
+			if (!this.state.vars.has("BASH_SOURCE")) {
+				io.stderr.write(this.prefix() + "return: can only `return' from a function or sourced script\n");
+				return 2;
+			}
 			throw new ReturnSignal(args.length ? count$1(args[0], 0) & 255 : this.state.status);
 		},
-		async break(args) {
+		async break(args, io) {
+			if (!this.loops) {
+				io.stderr.write(this.prefix() + "break: only meaningful in a `for', `while', or `until' loop\n");
+				return 0;
+			}
 			throw new LoopSignal("break", count$1(args[0], 1));
 		},
-		async continue(args) {
+		async continue(args, io) {
+			if (!this.loops) {
+				io.stderr.write(this.prefix() + "continue: only meaningful in a `for', `while', or `until' loop\n");
+				return 0;
+			}
 			throw new LoopSignal("continue", count$1(args[0], 1));
 		},
 		async let(args) {
@@ -2999,14 +3295,14 @@ var NanocodePython = (function(exports) {
 			return value === 0 ? 1 : 0;
 		},
 		async test(args, io) {
-			return this.test(args.map((text) => ({ text })), false, io);
+			return this.test(args.map((text) => ({ text })), "test", io);
 		},
 		async "["(args, io) {
 			if (args[args.length - 1] !== "]") {
-				io.stderr.write("bash: [: missing `]'\n");
+				io.stderr.write(this.prefix() + "[: missing `]'\n");
 				return 2;
 			}
-			return this.test(args.slice(0, -1).map((text) => ({ text })), false, io);
+			return this.test(args.slice(0, -1).map((text) => ({ text })), "[", io);
 		},
 		async type(args, io) {
 			let status = 0;
@@ -3045,7 +3341,7 @@ var NanocodePython = (function(exports) {
 					"true"
 				].includes(name)) kinds.push("file");
 				if (!kinds.length) {
-					if (!terse) io.stderr.write("bash: type: " + name + ": not found\n");
+					if (!terse) io.stderr.write(this.prefix() + "type: " + name + ": not found\n");
 					status = 1;
 					continue;
 				}
@@ -3076,6 +3372,7 @@ var NanocodePython = (function(exports) {
 		async builtin(args, io) {
 			const builtin = args.length ? BUILTINS[args[0]] : void 0;
 			if (!builtin) throw new CommandError((args[0] ?? "") + ": not a shell builtin");
+			if (this.host.machine && machineBuiltin(args[0], args.slice(1))) throw new MachineError(unanswered(args[0]));
 			return builtin.call(this, args.slice(1), io);
 		},
 		async which(args, io) {
@@ -3168,20 +3465,16 @@ var NanocodePython = (function(exports) {
 			return this.subshell(async () => {
 				if (flags.length) await BUILTINS.set.call(this, flags, io);
 				if (command) {
-					const source = args[i] ?? "";
-					let script;
-					try {
-						script = parse(source);
-					} catch (error) {
-						if (!(error instanceof SyntaxError)) throw error;
-						io.stderr.write("bash: -c: " + error.message + "\n");
-						return 2;
-					}
-					if (args[i + 1] !== void 0) this.state.arg0 = args[i + 1];
+					const parsed = parseLines(args[i] ?? "");
+					this.state.arg0 = args[i + 1] ?? "bash";
 					this.state.positional = args.slice(i + 2);
+					this.state.vars.delete("BASH_SOURCE");
 					this.enter();
 					try {
-						return await this.script(script, io);
+						const status = await this.script(parsed.script, io);
+						if (!parsed.error) return status;
+						io.stderr.write(syntax(parsed.error, "bash: -c"));
+						return 2;
 					} finally {
 						this.leave();
 					}
@@ -3246,12 +3539,19 @@ var NanocodePython = (function(exports) {
 	BUILTINS["."] = BUILTINS.source;
 	BUILTINS.readarray = BUILTINS.mapfile;
 	BUILTINS.sh = BUILTINS.bash;
+	function syntax(error, label, offset = 0) {
+		const head = label + ": line " + (error.line + offset) + ": ";
+		return head + error.message + "\n" + (error.context === void 0 ? "" : head + "`" + error.context + "'\n");
+	}
 	// src/bash/internal/Prune.ts
 	function inside(path, point) {
 		return path === point || path.startsWith(point + "/");
 	}
 	const AHEAD = 64;
 	const AHEAD_BYTES = 16 << 20;
+	function unindexed(files, limit) {
+		return "the pattern has no literal of three or more characters for the index of this path, so it would read all " + files + " files (at most " + limit + " without one); add such a literal or search a smaller directory";
+	}
 	function ahead(items, load) {
 		const slots = /* @__PURE__ */ new Map();
 		const sizes = /* @__PURE__ */ new Map();
@@ -3281,10 +3581,10 @@ var NanocodePython = (function(exports) {
 			return promise;
 		};
 	}
-	async function pruned(fs, root, literals, exact) {
+	async function pruned(fs, root, literals, exact, every) {
 		const matched = exact && fs.matches ? await fs.matches(root, exact.literals, exact.ignoreCase) : null;
 		if (!matched && (!literals || !fs.search)) return null;
-		const files = matched ?? await fs.search(root, literals);
+		const files = matched ?? await fs.search(root, literals, every ?? void 0);
 		if (!files) return null;
 		const tree = /* @__PURE__ */ new Map([[root, /* @__PURE__ */ new Set()]]);
 		if (matched) tree.exact = true;
@@ -3338,25 +3638,96 @@ var NanocodePython = (function(exports) {
 		}
 		return out.length ? out : null;
 	}
-	function branches(pattern, syntax) {
+	function conjunction(patterns, syntax) {
+		if (syntax === "fixed" || patterns.length !== 1) return null;
+		const every = [];
+		if (!branches(patterns[0], syntax, every) || every.length < 2) return null;
+		return {
+			groups: every.map((span) => span.set),
+			gaps: every.slice(1).map((span, index) => syntax === "basic" ? null : width(patterns[0].slice(every[index].end, span.start)))
+		};
+	}
+	function width(source) {
+		let total = 0;
+		let i = 0;
+		while (i < source.length) {
+			const c = source[i];
+			let atom = 1;
+			if (c === "\\") {
+				const next = source[i + 1];
+				if (next === void 0 || /[0-9kgpPxuNc]/.test(next)) return null;
+				if (/[bBAzZG]/.test(next)) atom = 0;
+				i += 2;
+			} else if (c === "[") {
+				const close = bracket(source, i + 1, true);
+				if (close < 0) return null;
+				i = close + 1;
+			} else if ("()|^$*+?{".includes(c)) return null;
+			else i++;
+			const repeat = /^(?:([*+])|\?|\{(\d+)\}|\{(\d*),(\d*)\})[?+]?/.exec(source.slice(i));
+			if (!repeat || !repeat[0]) {
+				total += atom;
+				continue;
+			}
+			i += repeat[0].length;
+			if (repeat[1] || repeat[4] === "") return null;
+			total += atom * Number(repeat[2] ?? repeat[4] ?? 1);
+		}
+		return total;
+	}
+	function branches(pattern, syntax, every) {
 		const basic = syntax === "basic";
 		const out = [];
-		let best = "";
+		let best = [];
 		let run = "";
-		const cut = () => {
-			if (run.length > best.length) best = run;
+		let runStart = 0;
+		let atomStart = 0;
+		let ended = 0;
+		const shortest = (set) => Math.min(...set.map((literal) => literal.length));
+		const consider = (set, start, end) => {
+			every?.push({
+				set,
+				start,
+				end
+			});
+			if (!best.length || shortest(set) > shortest(best) || shortest(set) === shortest(best) && set.length < best.length) best = set;
+		};
+		const cut = (end) => {
+			if (run) consider([run], runStart, end);
 			run = "";
 		};
-		const end = () => {
-			cut();
-			if (!best) return false;
-			out.push(best);
-			best = "";
+		const append = (text, start) => {
+			if (!run) runStart = start;
+			atomStart = start;
+			run += text;
+		};
+		const end = (at) => {
+			cut(at);
+			if (++ended > 1) every?.splice(0);
+			if (!best.length) return false;
+			out.push(...best);
+			best = [];
 			return true;
+		};
+		const nested = (start) => {
+			const close = closing$1(pattern, start, basic, syntax === "perl");
+			if (close < 0) return -1;
+			const last = quantifier(pattern, close + 1, basic);
+			const repeat = pattern.slice(close + 1, last + 1);
+			const inner = pattern.slice(start, basic ? close - 1 : close);
+			const optional = basic ? /^(\*|\\\?|\\\{0*[,\\])/.test(repeat) : /^(\*|\?|\{0*[,}])/.test(repeat);
+			const body = basic ? inner : /^\?(?::|P?<[A-Za-z_][\w]*>)/.exec(inner) ? inner.replace(/^\?(?::|P?<[A-Za-z_][\w]*>)/, "") : inner;
+			const open = start - (basic ? 2 : 1);
+			cut(open);
+			if (!optional && (basic || !inner.startsWith("?") || body !== inner)) {
+				const set = branches(body, syntax);
+				if (set) consider(set, open, last + 1);
+			}
+			return last;
 		};
 		const quantified = () => {
 			run = run.slice(0, -1);
-			cut();
+			cut(atomStart);
 		};
 		for (let i = 0; i < pattern.length; i++) {
 			const c = pattern[i];
@@ -3365,13 +3736,12 @@ var NanocodePython = (function(exports) {
 				i++;
 				if (next === void 0) return null;
 				if (basic && next === "|") {
-					if (!end()) return null;
+					if (!end(i - 1)) return null;
 					continue;
 				}
 				if (basic && next === "(") {
-					i = group(pattern, i + 1, true);
+					i = nested(i + 1);
 					if (i < 0) return null;
-					cut();
 					continue;
 				}
 				if (basic && (next === "?" || next === "+" || next === "{")) {
@@ -3380,15 +3750,15 @@ var NanocodePython = (function(exports) {
 					continue;
 				}
 				if (/[A-Za-z0-9]/.test(next)) {
-					cut();
+					cut(i - 1);
 					i = escape(pattern, i, next);
 					continue;
 				}
 				if (syntax !== "perl" && "<>'`".includes(next)) {
-					cut();
+					cut(i - 1);
 					continue;
 				}
-				run += next;
+				append(next, i - 1);
 				continue;
 			}
 			if (c === "*") {
@@ -3405,30 +3775,30 @@ var NanocodePython = (function(exports) {
 				continue;
 			}
 			if (!basic && c === "|") {
-				if (!end()) return null;
+				if (!end(i)) return null;
 				continue;
 			}
 			if (!basic && c === "(") {
-				i = group(pattern, i + 1, false, syntax === "perl");
+				i = nested(i + 1);
 				if (i < 0) return null;
-				cut();
 				continue;
 			}
 			if (c === "[") {
+				const open = i;
 				i = bracket(pattern, i + 1, syntax === "perl");
 				if (i < 0) return null;
-				cut();
+				cut(open);
 				continue;
 			}
 			if (c === "." || c === "^" || c === "$" || !basic && c === ")") {
-				cut();
+				cut(i);
 				continue;
 			}
-			run += c;
+			append(c, i);
 		}
-		return end() ? out : null;
+		return end(pattern.length) ? out : null;
 	}
-	function group(pattern, start, basic, perl = false) {
+	function closing$1(pattern, start, basic, perl) {
 		let depth = 1;
 		for (let i = start; i < pattern.length; i++) {
 			const c = pattern[i];
@@ -3440,11 +3810,11 @@ var NanocodePython = (function(exports) {
 			if (c === "\\") {
 				const next = pattern[++i];
 				if (basic && next === "(") depth++;
-				if (basic && next === ")" && --depth === 0) return quantifier(pattern, i + 1, basic);
+				if (basic && next === ")" && --depth === 0) return i;
 				continue;
 			}
 			if (!basic && c === "(") depth++;
-			if (!basic && c === ")" && --depth === 0) return quantifier(pattern, i + 1, basic);
+			if (!basic && c === ")" && --depth === 0) return i;
 		}
 		return -1;
 	}
@@ -3487,6 +3857,7 @@ var NanocodePython = (function(exports) {
 		const flags = /* @__PURE__ */ new Set();
 		const values = /* @__PURE__ */ new Map();
 		const operands = [];
+		const order = [];
 		const add = (key, value) => values.set(key, [...values.get(key) ?? [], value]);
 		for (let i = 0; i < args.length; i++) {
 			const arg = args[i];
@@ -3504,7 +3875,10 @@ var NanocodePython = (function(exports) {
 					const value = eq < 0 ? args[++i] : arg.slice(eq + 1);
 					if (value === void 0) throw new CommandError("option '" + arg + "' requires an argument", 2);
 					add(key, value);
-				} else flags.add(key);
+				} else {
+					flags.add(key);
+					order.push(key);
+				}
 				continue;
 			}
 			if (arg.startsWith("-") && arg.length > 1) {
@@ -3526,6 +3900,7 @@ var NanocodePython = (function(exports) {
 						break;
 					}
 					flags.add(flag);
+					order.push(flag);
 				}
 				if (!valid) throw new CommandError("invalid option -- '" + arg.slice(1) + "'", 2);
 				continue;
@@ -3535,7 +3910,8 @@ var NanocodePython = (function(exports) {
 		return {
 			flags,
 			values,
-			operands
+			operands,
+			order
 		};
 	}
 	function last(parsed, key) {
@@ -3559,6 +3935,50 @@ var NanocodePython = (function(exports) {
 		if (stat) budget(ctx.limits, 2 * stat.size, ctx.name + ": " + operand);
 		return decode(await ctx.fs.read(path));
 	}
+	const escapes = {
+		"\x07": "\\a",
+		"\b": "\\b",
+		"	": "\\t",
+		"\n": "\\n",
+		"\v": "\\v",
+		"\f": "\\f",
+		"\r": "\\r"
+	};
+	function shellQuote(name, always = false) {
+		if (name === "") return "''";
+		const parts = name.match(/[\u0000-\u001f\u007f\udc80-\udcff]+|[^\u0000-\u001f\u007f\udc80-\udcff]+/g);
+		if (parts.length > 1 || parts[0] !== name || /[\u0000-\u001f\u007f\udc80-\udcff]/.test(name)) return parts.map((part) => /^[\u0000-\u001f\u007f\udc80-\udcff]/.test(part) ? "$'" + [...part].map((c) => escapes[c] ?? "\\" + (c.charCodeAt(0) >= 56448 ? c.charCodeAt(0) - 56320 : c.charCodeAt(0)).toString(8).padStart(3, "0")).join("") + "'" : shellQuote(part, true)).join("");
+		if (!(/[ !"$&'()*:;<=>?[\\^`|]/.test(name) || /^[#~]/.test(name) || name === "{" || name === "}") && !always) return name;
+		if (!name.includes("'")) return "'" + name + "'";
+		if (!/[$`"\\!]/.test(name)) return "\"" + name + "\"";
+		return "'" + name.replaceAll("'", "'\\''") + "'";
+	}
+	const quoting = /* @__PURE__ */ new Set([
+		"base64",
+		"cat",
+		"comm",
+		"cut",
+		"join",
+		"md5sum",
+		"nl",
+		"od",
+		"paste",
+		"sha1sum",
+		"sha224sum",
+		"sha256sum",
+		"sha384sum",
+		"sha512sum",
+		"uniq",
+		"wc"
+	]);
+	function readFailure(ctx, operand, error) {
+		const reason = error.code === "ENOENT" ? "No such file or directory" : error.code === "EISDIR" ? "Is a directory" : error.message;
+		if (ctx.name === "head" || ctx.name === "tail") return error.code === "EISDIR" ? "error reading " + shellQuote(operand, true) + ": " + reason : "cannot open " + shellQuote(operand, true) + " for reading: " + reason;
+		if (ctx.name === "tac") return "failed to open " + shellQuote(operand, true) + " for reading: " + reason;
+		if (ctx.name === "sort") return (error.code === "EISDIR" ? "read failed: " : "cannot read: ") + shellQuote(operand) + ": " + reason;
+		if (ctx.name === "rev") return "cannot open " + operand + ": " + reason;
+		return (quoting.has(ctx.name) ? shellQuote(operand) : operand) + ": " + reason;
+	}
 	async function eachInput(ctx, operands, visit, size) {
 		let status = 0;
 		for (const operand of operands.length ? operands : ["-"]) {
@@ -3567,7 +3987,7 @@ var NanocodePython = (function(exports) {
 				text = await readInput(ctx, operand, size);
 			} catch (error) {
 				if (!(error instanceof FsError)) throw error;
-				ctx.stderr.write(ctx.name + ": " + operand + ": " + (error.code === "ENOENT" ? "No such file or directory" : error.code === "EISDIR" ? "Is a directory" : error.message) + "\n");
+				ctx.stderr.write(ctx.name + ": " + readFailure(ctx, operand, error) + "\n");
 				status = 1;
 				continue;
 			}
@@ -3637,7 +4057,7 @@ var NanocodePython = (function(exports) {
 				text = await readInput(ctx, operand);
 			} catch (error) {
 				if (!(error instanceof FsError)) throw error;
-				ctx.stderr.write(ctx.name + ": " + operand + ": " + (error.code === "ENOENT" ? "No such file or directory" : error.code === "EISDIR" ? "Is a directory" : error.message) + "\n");
+				ctx.stderr.write(ctx.name + ": " + readFailure(ctx, operand, error) + "\n");
 				status = 1;
 				continue;
 			}
@@ -3686,7 +4106,7 @@ var NanocodePython = (function(exports) {
 	}
 	function lastLines(text, n) {
 		let pos = text.length - 1;
-		for (let k = 0; k < n && pos >= 0; k++) pos = text.lastIndexOf("\n", pos - 1);
+		for (let k = 0; k < n && pos >= 0; k++) pos = pos ? text.lastIndexOf("\n", pos - 1) : -1;
 		return pos < 0 ? text : text.slice(pos + 1);
 	}
 	async function headTail(ctx, tail) {
@@ -3703,6 +4123,7 @@ var NanocodePython = (function(exports) {
 				follow: "f"
 			}
 		});
+		for (const [key, unit] of [["n", "lines"], ["c", "bytes"]]) for (const value of parsed.values.get(key) ?? []) if (!/^[+-]?\d+[kKmMgGbB]?$/.test(value)) throw new CommandError("invalid number of " + unit + ": ‘" + value + "’", 1);
 		const lineSpec = last(parsed, "n");
 		const byteSpec = last(parsed, "c");
 		const headers = (parsed.operands.length > 1 || parsed.flags.has("v")) && !parsed.flags.has("q");
@@ -3795,9 +4216,17 @@ var NanocodePython = (function(exports) {
 				words: "w",
 				bytes: "c",
 				chars: "m",
-				"max-line-length": "L"
+				"max-line-length": "L",
+				total: "total"
 			}
 		});
+		const when = last(parsed, "total") ?? "auto";
+		if (![
+			"auto",
+			"always",
+			"only",
+			"never"
+		].includes(when)) throw new CommandError("invalid argument '" + when + "' for '--total'", 1);
 		const f = parsed.flags;
 		const fields = f.size ? [
 			"l",
@@ -3832,13 +4261,26 @@ var NanocodePython = (function(exports) {
 									n--;
 									i++;
 								}
+							} else if (code >= 56448 && code <= 56575) {
+								const lead = code - 56320;
+								const tail = lead >= 252 ? 5 : lead >= 248 ? 4 : lead >= 244 ? 3 : 0;
+								let k = 0;
+								while (k < tail && (text.charCodeAt(i + 1 + k) & 65472) === 56448) k++;
+								if (tail && k === tail) {
+									n -= tail;
+									i += tail;
+								} else n--;
 							}
 						}
 						return n;
 					}
 					if (field === "c") return bytes = byteLength(text);
 					let max = 0;
-					for (const line of text.split("\n")) max = Math.max(max, line.length);
+					for (const line of text.split(/[\n\r\f]/)) {
+						let width = 0;
+						for (const c of line) width = c === "	" ? width + 8 - width % 8 : width + charWidth(c);
+						max = Math.max(max, width);
+					}
 					return max;
 				}),
 				bytes: fields.includes("c") ? bytes : byteLength(text)
@@ -3851,6 +4293,18 @@ var NanocodePython = (function(exports) {
 				name: parsed.operands.length ? operand : "",
 				bytes: 0
 			};
+			const stat = fields.length === 1 && fields[0] === "c" && ![
+				"-",
+				"/dev/stdin",
+				"/dev/fd/0"
+			].includes(operand) ? await ctx.fs.stat(ctx.resolve(operand)) : null;
+			if (stat?.kind === "file") {
+				row.counts = [stat.size];
+				row.bytes = stat.size;
+				totals[0] += stat.size;
+				rows.push(row);
+				continue;
+			}
 			const failed = await eachBatch(ctx, [operand], (text) => {
 				const { counts, bytes } = tally(text);
 				row.counts = row.counts.map((value, index) => fields[index] === "L" ? Math.max(value, counts[index]) : value + counts[index]);
@@ -3863,22 +4317,159 @@ var NanocodePython = (function(exports) {
 			row.counts.forEach((value, index) => totals[index] = fields[index] === "L" ? Math.max(totals[index], value) : totals[index] + value);
 			rows.push(row);
 		}
-		if (parsed.operands.length > 1) rows.push({
+		const files = rows.length;
+		if (when === "always" || when === "only" || when === "auto" && parsed.operands.length > 1) rows.push({
 			counts: totals,
-			name: "total",
+			name: when === "only" ? "" : "total",
 			bytes: 0
 		});
 		const stdin = !parsed.operands.length || parsed.operands.includes("-");
-		const bytes = rows.slice(0, parsed.operands.length || 1).reduce((sum, row) => sum + row.bytes, 0);
-		const width = fields.length === 1 && rows.length === 1 ? 0 : Math.max(stdin ? 7 : 1, String(bytes).length);
-		for (const row of rows) ctx.stdout.write(row.counts.map((value) => String(value).padStart(width)).join(" ") + (row.name ? " " + row.name : "") + "\n");
+		const bytes = rows.slice(0, files).reduce((sum, row) => sum + row.bytes, 0);
+		const width = when === "only" || fields.length === 1 && rows.length === 1 ? 0 : Math.max(stdin ? 7 : 1, String(bytes).length);
+		for (const row of when === "only" ? rows.slice(files) : rows) ctx.stdout.write(row.counts.map((value) => String(value).padStart(width)).join(" ") + (row.name ? " " + row.name : "") + "\n");
 		return status;
 	});
+	function requireRegExp(found, regex) {
+		if (!found) return void 0;
+		return new RegExp(found.map(escapeRegExp).join("|"), [...regex.flags].filter((flag) => flag === "i" || flag === "u" || flag === "v").join(""));
+	}
+	const leads = /* @__PURE__ */ new WeakMap();
+	function alternates(source) {
+		let depth = 0;
+		for (let i = 0; i < source.length; i++) {
+			const c = source[i];
+			if (c === "\\") i++;
+			else if (c === "[") {
+				for (i++; i < source.length && source[i] !== "]"; i++) if (source[i] === "\\") i++;
+			} else if (c === "(") depth++;
+			else if (c === ")") depth--;
+			else if (c === "|" && depth === 0) return true;
+		}
+		return false;
+	}
+	function opening(branch) {
+		let literal = "";
+		for (let i = 0; i < branch.length; i++) {
+			const c = branch[i];
+			if ("?*{".includes(c)) return literal.slice(0, -1) || null;
+			if (c === "+") return literal || null;
+			if (c === "\\") {
+				if (!/[\\^$.|?*+()[\]{}/-]/.test(branch[i + 1] ?? "")) return literal || null;
+				literal += branch[++i];
+			} else if ("^$.|()[]".includes(c)) return literal || null;
+			else literal += c;
+		}
+		return literal || null;
+	}
+	function openings(rest) {
+		if (rest[0] !== "(") {
+			const literal = opening(rest);
+			return literal ? [literal] : null;
+		}
+		if (rest.startsWith("(?=") || rest.startsWith("(?!") || rest.startsWith("(?<=") || rest.startsWith("(?<!")) return null;
+		let depth = 0;
+		let end = -1;
+		for (let i = 0; i < rest.length && end < 0; i++) {
+			const c = rest[i];
+			if (c === "\\") i++;
+			else if (c === "[") {
+				for (i++; i < rest.length && rest[i] !== "]"; i++) if (rest[i] === "\\") i++;
+			} else if (c === "(") depth++;
+			else if (c === ")" && --depth === 0) end = i;
+		}
+		if (end < 0 || "?*{".includes(rest[end + 1] ?? "")) return null;
+		const inner = rest.slice(rest.startsWith("(?:") ? 3 : rest.startsWith("(?<") ? rest.indexOf(">") + 1 : 1, end);
+		const branches = [];
+		let from = 0;
+		depth = 0;
+		for (let i = 0; i <= inner.length; i++) {
+			const c = inner[i];
+			if (c === "\\") i++;
+			else if (c === "[") {
+				for (i++; i < inner.length && inner[i] !== "]"; i++) if (inner[i] === "\\") i++;
+			} else if (c === "(") depth++;
+			else if (c === ")") depth--;
+			else if (i === inner.length || c === "|" && depth === 0) {
+				branches.push(inner.slice(from, i));
+				from = i + 1;
+			}
+		}
+		const found = branches.map(opening);
+		return found.every((literal) => literal) ? found : null;
+	}
+	function closing(source) {
+		let depth = 0;
+		for (let i = 0; i < source.length; i++) {
+			const c = source[i];
+			if (c === "\\") i++;
+			else if (c === "[") {
+				for (i++; i < source.length && source[i] !== "]"; i++) if (source[i] === "\\") i++;
+			} else if (c === "(") depth++;
+			else if (c === ")" && --depth === 0) return i;
+		}
+		return -1;
+	}
+	function leadMatcher(regex) {
+		let source = regex.source;
+		while (source.startsWith("(?:") && closing(source) === source.length - 1) source = source.slice(3, -1);
+		const head = /^\.\{(\d+)(,(\d*))?\}\??/.exec(source);
+		if (!head || head[3] === "") return null;
+		const low = Number(head[1]);
+		const high = head[2] === void 0 ? low : Number(head[3]);
+		const rest = source.slice(head[0].length);
+		if (high < low || !rest || alternates(source)) return null;
+		const starts = openings(rest);
+		if (!starts) return null;
+		const flags = [...regex.flags].filter((flag) => flag === "i" || flag === "u" || flag === "v").join("");
+		let find;
+		let sticky;
+		try {
+			find = new RegExp(starts.map(escapeRegExp).join("|"), flags + "g");
+			sticky = new RegExp(regex.source, regex.flags.replace(/[gy]/g, "") + "y");
+		} catch {
+			return null;
+		}
+		const unicode = /[uv]/.test(flags);
+		const pair = (line, at) => unicode && line.charCodeAt(at) >= 55296 && line.charCodeAt(at) <= 56319 && line.charCodeAt(at + 1) >= 56320 && line.charCodeAt(at + 1) <= 57343;
+		return (line, from) => {
+			let cursor = from;
+			find.lastIndex = from;
+			for (let found = find.exec(line); found; found = find.exec(line)) {
+				let start = found.index;
+				if (!unicode) start = Math.max(cursor, start - high);
+				else for (let step = 0; step < high && start > cursor; step++) start -= start - 2 >= cursor && pair(line, start - 2) ? 2 : 1;
+				sticky.lastIndex = start;
+				const match = sticky.exec(line);
+				if (match) return match;
+				cursor = Math.max(cursor, start + (pair(line, start) ? 2 : 1));
+				find.lastIndex = found.index + 1;
+			}
+			return null;
+		};
+	}
+	function* leading(lead, line) {
+		for (let match = lead(line, 0); match; match = lead(line, match.index + match[0].length)) yield match;
+	}
+	function* rustMatches(line, regex) {
+		let end = -1;
+		regex.lastIndex = 0;
+		for (const match of line.matchAll(regex)) {
+			if (!match[0] && match.index === end) continue;
+			end = match.index + match[0].length;
+			yield match;
+		}
+	}
+	function leadOf(regex) {
+		let lead = leads.get(regex);
+		if (lead === void 0) leads.set(regex, lead = leadMatcher(regex));
+		return lead;
+	}
 	function scan(text, options) {
 		const all = text.split(options.separator ?? "\n");
 		if (all[all.length - 1] === "") all.pop();
 		const regex = options.regex;
-		const context = !options.silent && !options.only && (options.before > 0 || options.after > 0);
+		const lead = leadOf(regex);
+		const context = !options.silent && (!options.only || !!options.onlyContext) && (options.before > 0 || options.after > 0 || !!options.passthru);
 		const starts = [];
 		if (options.offsets) {
 			let offset = 0;
@@ -3887,54 +4478,118 @@ var NanocodePython = (function(exports) {
 				offset += encode(line).length + 1;
 			}
 		}
-		const prefix = (n, mark, column) => (options.name !== void 0 ? options.name + mark : "") + (options.numbers ? n + 1 + (options.base ?? 0) + mark : "") + (options.offsets ? (starts[n] ?? 0) + (column !== void 0 && !options.column ? encode(all[n].slice(0, column)).length : 0) + mark : "") + (options.column && column !== void 0 ? column + 1 + mark : "");
+		const pad = (value) => String(value).padStart(options.tab ?? 0);
+		const prefix = (n, mark, column, shift = 0) => {
+			const head = (options.name !== void 0 ? options.name + (options.zero ? "\0" : mark) : "") + (options.numbers ? pad(n + 1 + (options.base ?? 0)) + mark : "") + (options.column && column !== void 0 ? encode(all[n].slice(0, column)).length + shift + 1 + mark : "") + (options.offsets ? pad((starts[n] ?? 0) + (column !== void 0 && (options.only || options.each) ? encode(all[n].slice(0, column)).length + shift : 0)) + mark : "");
+			return head && options.tab !== void 0 ? head + "	" : head;
+		};
 		const replaced = (line) => options.replace === void 0 ? line : line.replace(regex, options.replace);
+		const fit = (text, mark, count = 0) => {
+			const shown = options.trim ? text.replace(/^[ \t\n\v\f\r]+/, "") : text;
+			if (options.columns === void 0 || byteLength(shown) + (mark ? 1 : 0) <= options.columns) return shown;
+			return count ? "[Omitted long line with " + count + " matches]" : mark === "-" ? "[Omitted long context line]" : "[Omitted long matching line]";
+		};
+		const unprintable = (text) => !!options.encoding && /(?<![\ud800-\udbff])[\udc80-\udcff]/.test(text);
+		const contextBody = (line) => options.invert ? replaced(line) : line;
+		const contextColumn = (line) => {
+			if (!options.column || !options.invert) return void 0;
+			regex.lastIndex = 0;
+			return regex.exec(line)?.index;
+		};
 		let matches = 0;
 		let lastPrinted = -1;
 		let pendingAfter = 0;
-		const emit = (i, mark, body) => {
-			if (context && options.state.printed && lastPrinted !== i - 1) options.write("--" + options.terminator);
+		const separate = (i) => {
+			if (context && !options.passthru && options.state.printed && (lastPrinted < 0 || lastPrinted < i - 1)) options.write("--" + options.terminator);
 			options.state.printed = true;
 			lastPrinted = i;
-			options.write(prefix(i, mark) + body + options.terminator);
+		};
+		const emit = (i, mark, body, column, shift = 0) => {
+			if (unprintable(body)) return void (options.state.binary = true);
+			separate(i);
+			options.write(prefix(i, mark, column, shift) + body + options.terminator);
+		};
+		const single = new RegExp(regex.source, regex.flags.replace("g", ""));
+		const substitute = (text) => options.replace === void 0 ? text : text.replace(single, options.replace);
+		const emitContext = (i, line) => {
+			const found = options.each && options.invert ? [...rustMatches(line, regex)] : [];
+			if (!found.length) return emit(i, "-", fit(contextBody(line), "-"), contextColumn(line));
+			let shift = 0;
+			for (const match of found) {
+				emit(i, "-", fit(contextBody(line), "-"), match.index, shift);
+				shift += byteLength(substitute(match[0])) - byteLength(match[0]);
+			}
+		};
+		const hits = (line) => {
+			regex.lastIndex = 0;
+			return options.require && !options.require.test(line) ? options.invert : (lead ? lead(line, 0) !== null : regex.test(line)) !== options.invert;
+		};
+		const emitMatch = (i, line) => {
+			if (options.only && !options.invert) {
+				regex.lastIndex = 0;
+				let shift = 0;
+				let separated = false;
+				for (const match of lead ? leading(lead, line) : options.empty ? rustMatches(line, regex) : line.matchAll(regex)) {
+					if (!match[0] && !options.empty) continue;
+					if (unprintable(match[0])) {
+						options.state.binary = true;
+						continue;
+					}
+					if (!separated) separate(i);
+					separated = true;
+					const shown = substitute(match[0]);
+					options.write(prefix(i, ":", match.index, shift) + fit(shown, "") + options.terminator);
+					shift += byteLength(shown) - byteLength(match[0]);
+				}
+			} else if (options.each && !options.invert) {
+				const found = [...rustMatches(line, regex)];
+				let shift = 0;
+				for (const match of found) {
+					emit(i, ":", fit(replaced(line), ":", found.length), match.index, shift);
+					shift += byteLength(substitute(match[0])) - byteLength(match[0]);
+				}
+			} else if (options.column) {
+				regex.lastIndex = 0;
+				const first = options.invert ? null : lead ? lead(line, 0) : regex.exec(line);
+				emit(i, ":", fit(replaced(line), ":"), first?.index);
+			} else emit(i, ":", fit(replaced(line), ":"));
 		};
 		for (let i = 0; i < all.length; i++) {
 			const line = all[i];
 			if (matches >= options.max) {
-				if (!context || pendingAfter <= 0) break;
-				emit(i, "-", line);
+				if (!context || pendingAfter <= 0 || options.halt?.(line, i, i)) break;
+				if (options.trailing && hits(line)) emitMatch(i, line);
+				else emitContext(i, line);
 				pendingAfter--;
 				continue;
 			}
-			regex.lastIndex = 0;
-			if (!(regex.test(line) !== options.invert)) {
-				if (context && pendingAfter > 0) {
-					emit(i, "-", line);
+			if (!hits(line)) {
+				if (context && (pendingAfter > 0 || options.passthru)) {
+					if (options.halt?.(line, i, i)) break;
+					emitContext(i, line);
 					pendingAfter--;
 				}
 				continue;
 			}
 			matches++;
 			if (options.silent) continue;
-			if (context) for (let j = Math.max(lastPrinted + 1, i - options.before); j < i; j++) emit(j, "-", all[j]);
-			if (options.only && !options.invert) {
-				regex.lastIndex = 0;
-				for (const match of line.matchAll(regex)) {
-					if (!match[0]) continue;
-					options.state.printed = true;
-					options.write(prefix(i, ":", match.index) + (options.replace === void 0 ? match[0] : match[0].replace(new RegExp(regex.source, regex.flags.replace("g", "")), options.replace)) + options.terminator);
+			if (context) for (let j = Math.max(lastPrinted + 1, i - options.before); j < i; j++) {
+				if (options.halt?.(all[j], j, i)) {
+					if (lastPrinted >= 0 && lastPrinted < j - 1) options.write("--" + options.terminator);
+					return matches - 1;
 				}
-			} else if (options.column) {
-				regex.lastIndex = 0;
-				const first = options.invert ? null : regex.exec(line);
-				options.state.printed = true;
-				options.write(prefix(i, ":", first?.index ?? 0) + replaced(line) + options.terminator);
-			} else emit(i, ":", replaced(line));
+				emitContext(j, all[j]);
+			}
+			if (options.halt?.(line, i, i)) {
+				if (context && !options.passthru && lastPrinted >= 0 && lastPrinted < i - 1) options.write("--" + options.terminator);
+				break;
+			}
+			emitMatch(i, line);
 			pendingAfter = options.after;
 		}
 		return matches;
 	}
-	function perlSource(pattern) {
+	function perlSource(pattern, unicode = false) {
 		let source = pattern;
 		let flags = "";
 		const inline = source.match(/^\(\?([imsx]+)\)/);
@@ -3944,13 +4599,55 @@ var NanocodePython = (function(exports) {
 		}
 		source = source.replace(/\(\?P</g, "(?<").replace(/\\A/g, "^").replace(/\\[zZ]/g, "$");
 		return {
-			source,
+			source: perlClasses(source, unicode),
 			flags
 		};
 	}
+	const RUST = {
+		w: "rust",
+		d: "decimal",
+		s: "white"
+	};
+	function perlClasses(source, unicode) {
+		let out = "";
+		for (let i = 0; i < source.length; i++) {
+			if (source[i] === "\\") {
+				const n = source[i + 1] ?? "";
+				if (unicode && "bB".includes(n) && n) out += boundary(n, unicodeClass("rust"), unicodeClass("rust") + "\\udc80-\\udcff");
+				else if (unicode && n && n.toLowerCase() in RUST) out += (n in RUST ? "[" : "[^") + unicodeClass(RUST[n.toLowerCase()]) + "]";
+				else out += source.slice(i, i + 2);
+				i++;
+				continue;
+			}
+			if (source[i] !== "[") {
+				out += source[i];
+				continue;
+			}
+			const negate = source[i + 1] === "^";
+			const excluded = [];
+			let body = "";
+			let j = i + (negate ? 2 : 1);
+			for (let first = true; j < source.length && (first || source[j] !== "]"); first = false) {
+				const posix = /^\[:(\^?)([a-z]+):\]/.exec(source.slice(j));
+				if (posix && posix[2] in CLASSES) {
+					if (posix[1]) excluded.push(CLASSES[posix[2]]);
+					else body += CLASSES[posix[2]];
+					j += posix[0].length;
+				} else if (source[j] === "\\") {
+					body += unicode && (source[j + 1] ?? "") in RUST ? unicodeClass(RUST[source[j + 1]]) : source.slice(j, j + 2);
+					j += 2;
+				} else body += (source[j] === "]" || source[j] === "[" ? "\\" : "") + source[j++];
+			}
+			if (j >= source.length) return out + source.slice(i);
+			const sets = (body ? ["[" + (negate ? "^" : "") + body + "]"] : []).concat(excluded.map((set) => "[^" + set + "]"));
+			out += sets.length === 1 ? sets[0] : "(?:" + sets.join("|") + ")";
+			i = j;
+		}
+		return out;
+	}
 	streaming(async (ctx) => {
 		const parsed = options(ctx.args, {
-			flags: "ivncLlrRhHqsoxwEFGPZaIUzb",
+			flags: "ivncLlrRhHqsoxwEFGPZaIUzbT",
 			values: "eABCmfd",
 			numeric: true,
 			long: {
@@ -3992,6 +4689,7 @@ var NanocodePython = (function(exports) {
 				"line-buffered": "",
 				"no-ignore-case": "",
 				"byte-offset": "b",
+				"initial-tab": "T",
 				label: "label",
 				"binary-files": "binary-files",
 				directories: "d",
@@ -3999,6 +4697,15 @@ var NanocodePython = (function(exports) {
 			}
 		});
 		const f = parsed.flags;
+		if ([
+			"E",
+			"F",
+			"G",
+			"P"
+		].filter((flag) => f.has(flag)).length > 1) {
+			ctx.stderr.write("grep: conflicting matchers specified\n");
+			return 2;
+		}
 		const operands = [...parsed.operands];
 		const patterns = [...parsed.values.get("e") ?? []];
 		for (const file of parsed.values.get("f") ?? []) try {
@@ -4011,7 +4718,9 @@ var NanocodePython = (function(exports) {
 			if (!operands.length) throw new CommandError("usage: grep [OPTION]... PATTERNS [FILE]...", 2);
 			for (const line of operands.shift().split("\n")) patterns.push(line);
 		}
-		let flags = (f.has("i") ? "i" : "") + "g";
+		let flags = (f.has("i") ? "i" : "") + (f.has("P") && f.has("z") ? "" : "s") + "g";
+		const warnings = [];
+		const word = f.has("w") ? f.has("P") ? "\\w" : unicodeClass("word") : "";
 		const sources = patterns.map((pattern) => {
 			let source;
 			if (f.has("F")) source = escapeRegExp(pattern);
@@ -4021,14 +4730,15 @@ var NanocodePython = (function(exports) {
 				if (perl.flags.includes("i") && !flags.includes("i")) flags += "i";
 				if (perl.flags.includes("s") && !flags.includes("s")) flags += "s";
 			} else try {
-				source = posixRegExp(pattern, f.has("E"), "").source;
+				source = posixRegExp(pattern, f.has("E"), "", warnings).source;
 			} catch (error) {
 				throw new CommandError(error.message.replace(/^Invalid regular expression: /, ""), 2);
 			}
-			if (f.has("w")) source = "(?<![\\w])(?:" + source + ")(?![\\w])";
+			if (f.has("w")) source = "(?<![" + word + "])(?:" + source + ")(?![" + word + "])";
 			if (f.has("x")) source = "^(?:" + source + ")$";
 			return source;
 		});
+		for (const warning of warnings) ctx.stderr.write("grep: warning: " + warning + "\n");
 		let regex;
 		try {
 			regex = new RegExp(sources.length ? sources.map((source) => "(?:" + source + ")").join("|") : "(?!)", flags);
@@ -4043,8 +4753,11 @@ var NanocodePython = (function(exports) {
 		const targets = [];
 		let status = 1;
 		let errors = false;
+		let unbounded = false;
 		let directories = false;
-		const prunable = !f.has("v") && !f.has("L") && !f.has("c") ? literals(patterns, f.has("F") ? "fixed" : f.has("P") ? "perl" : f.has("E") ? "extended" : "basic") : null;
+		const syntax = f.has("F") ? "fixed" : f.has("P") ? "perl" : f.has("E") ? "extended" : "basic";
+		const prunable = !f.has("v") && !f.has("L") && !f.has("c") ? literals(patterns, syntax) : null;
+		const every = prunable && !f.has("z") ? conjunction(patterns, syntax) : null;
 		const exactTerms = (f.has("l") || f.has("q")) && !f.has("v") && !f.has("L") && !f.has("c") && !f.has("w") && !f.has("x") && !f.has("z") ? exactLiterals(patterns, f.has("F") ? "fixed" : f.has("P") ? "perl" : f.has("E") ? "extended" : "basic") : null;
 		const collect = async (operand, display, top, tree) => {
 			const path = ctx.resolve(operand);
@@ -4074,8 +4787,14 @@ var NanocodePython = (function(exports) {
 				if (top) tree = await pruned(ctx.fs, path, prunable, exactTerms && {
 					literals: exactTerms,
 					ignoreCase: f.has("i")
-				});
+				}, every);
+				const walked = targets.length;
 				for (const child of tree ? prunedList(tree, path) : await ctx.fs.list(path)) await collect((path === "/" ? "" : path) + "/" + child, display === "" ? child : display.replace(/\/$/, "") + "/" + child, false, tree);
+				const limit = top && !tree ? await ctx.fs.scanLimit?.(path) : null;
+				if (typeof limit === "number" && targets.length - walked > limit) {
+					ctx.stderr.write("grep: " + display + ": " + unindexed(targets.length - walked, limit) + "\n");
+					unbounded = true;
+				}
 				return;
 			}
 			if (!top || recursive) {
@@ -4092,6 +4811,7 @@ var NanocodePython = (function(exports) {
 		if (implicit) await collect(".", "", true);
 		else for (const operand of operands) if (operand === "-") targets.push("-");
 		else await collect(operand, operand, true);
+		if (unbounded) return 2;
 		const named = f.has("H") || !f.has("h") && (operands.length > 1 || directories);
 		const context = Number(last(parsed, "n") ?? 0);
 		const after = Number(last(parsed, "A") ?? last(parsed, "C") ?? context);
@@ -4102,15 +4822,64 @@ var NanocodePython = (function(exports) {
 		const state = { printed: false };
 		const listing = f.has("q") || f.has("l") || f.has("L") || f.has("c");
 		const separator = f.has("z") ? "\0" : "\n";
-		const search = async (source, name, stream) => {
+		const require = requireRegExp(literals(patterns, syntax), regex);
+		const binaries = last(parsed, "binary-files");
+		const textual = f.has("a") || binaries === "text";
+		const blocks = (source, stream, size) => {
+			let consumed = 0;
+			let carry = "";
+			let split = textual || f.has("z");
+			let done = false;
+			return async () => {
+				for (;;) {
+					if (split || done) {
+						const rest = carry;
+						carry = "";
+						return rest || (done ? null : source());
+					}
+					const more = await source();
+					if (more === null) {
+						done = true;
+						continue;
+					}
+					carry += more;
+					const nul = carry.indexOf("\0");
+					if (nul < 0 && !stream) {
+						done = true;
+						continue;
+					}
+					const bytes = encode(carry);
+					const at = consumed + (nul >= 0 ? byteLength(carry.slice(0, nul)) : bytes.length);
+					const head = bytes.subarray(0, Math.max(0, at - at % size - consumed));
+					const end = decode(head.subarray(0, head.lastIndexOf(10) + 1)).length;
+					if (nul >= 0) split = true;
+					if (!end) continue;
+					const text = carry.slice(0, end);
+					carry = carry.slice(end);
+					consumed += byteLength(text);
+					return text;
+				}
+			};
+		};
+		const search = async (source, name, stream, piped = false) => {
 			let matches = 0;
 			let binary = false;
+			let unseen = 0;
 			let base = 0;
-			for (let text = await source(); text !== null; text = await source()) {
-				binary ||= !f.has("a") && !f.has("z") && text.includes("\0");
-				const silent = listing || binary || last(parsed, "binary-files") === "without-match";
+			state.binary = false;
+			const read = blocks(source, stream, stream || piped ? 65536 : 98304);
+			for (let text = await read(); text !== null; text = await read()) {
+				if (!binary && !textual && !f.has("z") && text.includes("\0")) {
+					if (binaries === "without-match") {
+						matches = 0;
+						break;
+					}
+					binary = true;
+					unseen = matches;
+				}
+				const silent = listing || binary;
 				let output = "";
-				matches += scan(text, {
+				matches += scan(binary ? text.replace(/\0/g, "\n") : text, {
 					regex,
 					invert: f.has("v"),
 					max: max - matches,
@@ -4121,8 +4890,11 @@ var NanocodePython = (function(exports) {
 					offsets: f.has("b"),
 					name: named ? name + (f.has("Z") ? "\0" : "") : void 0,
 					base,
+					require,
 					separator,
 					terminator,
+					encoding: !textual,
+					tab: f.has("T") ? piped ? 19 : String(byteLength(text)).length : void 0,
 					silent,
 					state,
 					write: (chunk) => void (output += chunk)
@@ -4136,7 +4908,7 @@ var NanocodePython = (function(exports) {
 					break;
 				}
 			}
-			if (binary && matches && !listing && last(parsed, "binary-files") !== "without-match") ctx.stderr.write("grep: " + name + ": binary file matches\n");
+			if ((binary && matches > unseen || state.binary && matches) && !listing) ctx.stderr.write("grep: " + name + ": binary file matches\n");
 			if (f.has("q")) return matches > 0;
 			if (f.has("c")) ctx.stdout.write((named ? name + nameEnd : "") + matches + "\n");
 			if (f.has("l") && matches) ctx.stdout.write(name + (f.has("Z") ? "\0" : "\n"));
@@ -4152,7 +4924,7 @@ var NanocodePython = (function(exports) {
 			};
 		};
 		const stdin = () => {
-			if (!before && !after && !f.has("b")) return [batches(ctx.stdin, separator), true];
+			if (!before && !after && !f.has("b") && !(f.has("T") && ctx.stdin.ready)) return [batches(ctx.stdin, separator), true];
 			let done = false;
 			return [async () => {
 				if (done) return null;
@@ -4162,12 +4934,13 @@ var NanocodePython = (function(exports) {
 		};
 		const stdinName = last(parsed, "label") ?? "(standard input)";
 		if (!operands.length && !recursive) {
+			const piped = !ctx.stdin.ready;
 			const [source, stream] = stdin();
-			if (await search(source, stdinName, stream)) status = 0;
+			if (await search(source, stdinName, stream, piped)) status = 0;
 		} else {
 			let stdinUsed = false;
-			const partial = prunable && !f.has("b") && !before && !after && !f.has("z") ? prunable : null;
-			const take = ahead(targets, (target) => target === "-" || target.matched || device(target.path) !== void 0 ? null : partial && target.pruned ? ctx.fs.excerpt?.(target.path, partial).then((bytes) => bytes ?? ctx.fs.read(target.path)) ?? ctx.fs.read(target.path) : ctx.fs.read(target.path));
+			const partial = prunable && !f.has("b") && !f.has("T") && !before && !after && !f.has("z") ? prunable : null;
+			const take = ahead(targets, (target) => target === "-" || target.matched || device(target.path) !== void 0 ? null : partial && target.pruned ? ctx.fs.excerpt?.(target.path, partial, every ?? void 0).then((bytes) => bytes ?? ctx.fs.read(target.path)) ?? ctx.fs.read(target.path) : ctx.fs.read(target.path));
 			for (let index = 0; index < targets.length; index++) {
 				const target = targets[index];
 				const pending = take(index);
@@ -4196,7 +4969,8 @@ var NanocodePython = (function(exports) {
 						continue;
 					}
 				}
-				if (await search(source, display, stream)) {
+				const piped = target === "-" ? !ctx.stdin.ready : device(target.path) !== void 0;
+				if (await search(source, display, stream, piped)) {
 					status = 0;
 					if (f.has("q")) return 0;
 				}
@@ -4205,8 +4979,16 @@ var NanocodePython = (function(exports) {
 		return errors && !(f.has("q") && status === 0) ? 2 : status;
 	});
 	streaming(async (ctx) => {
-		const parsed = options(ctx.args, {
-			flags: "cdui",
+		let repeated;
+		let grouping;
+		const parsed = options(ctx.args.filter((arg) => {
+			const match = arg.match(/^--(all-repeated|group)(?:=(.*))?$/);
+			if (!match) return true;
+			if (match[1] === "group") grouping = match[2] ?? "separate";
+			else repeated = match[2] ?? "none";
+			return false;
+		}), {
+			flags: "cduiD",
 			values: "fsw",
 			long: {
 				count: "c",
@@ -4219,6 +5001,9 @@ var NanocodePython = (function(exports) {
 			}
 		});
 		const f = parsed.flags;
+		if (f.has("D")) repeated ??= "none";
+		if (grouping !== void 0 && (f.has("c") || f.has("d") || f.has("u") || repeated)) throw new CommandError("--group is mutually exclusive with -c/-d/-D/-u\nTry 'uniq --help' for more information.");
+		if (repeated && f.has("c")) throw new CommandError("printing all duplicated lines and repeat counts is meaningless\nTry 'uniq --help' for more information.");
 		const skipFields = Number(last(parsed, "f") ?? 0);
 		const skipChars = Number(last(parsed, "s") ?? 0);
 		const width = last(parsed, "w") === void 0 ? void 0 : Number(last(parsed, "w"));
@@ -4231,21 +5016,38 @@ var NanocodePython = (function(exports) {
 		};
 		let current;
 		let out = "";
+		let groups = 0;
 		const target = parsed.operands[1];
 		const flush = (group) => {
+			if (grouping !== void 0) {
+				if (groups++ ? grouping !== "append" : grouping === "prepend" || grouping === "both") out += "\n";
+				out += group.lines.join("\n") + "\n";
+				if (grouping === "append") out += "\n";
+				return;
+			}
+			if (repeated) {
+				if (group.count < 2) return;
+				if (repeated === "prepend" || repeated === "separate" && groups) out += "\n";
+				groups++;
+				out += group.lines.join("\n") + "\n";
+				return;
+			}
 			if (f.has("d") && group.count < 2 || f.has("u") && group.count !== 1) return;
 			out += (f.has("c") ? String(group.count).padStart(7) + " " : "") + group.line + "\n";
 		};
 		const status = await eachBatch(ctx, parsed.operands.slice(0, 1), async (text) => {
 			for (const line of lines(text)) {
 				const value = key(line);
-				if (current && current.key === value) current.count++;
-				else {
+				if (current && current.key === value) {
+					current.count++;
+					if (repeated || grouping !== void 0) current.lines.push(line);
+				} else {
 					if (current) flush(current);
 					current = {
 						line,
 						key: value,
-						count: 1
+						count: 1,
+						lines: [line]
 					};
 				}
 			}
@@ -4255,10 +5057,22 @@ var NanocodePython = (function(exports) {
 			}
 		});
 		if (current) flush(current);
+		if (grouping === "both" && groups) out += "\n";
 		if (target !== void 0) await ctx.fs.write(ctx.resolve(target), encode(out));
 		else await put(ctx, out);
 		return status;
 	});
+	function bytewise(text) {
+		if (/^[\u0000-\u007f]*$/.test(text)) return text;
+		const bytes = encode(text);
+		let out = "";
+		for (let i = 0; i < bytes.length; i += 8192) out += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+		return out;
+	}
+	function unbytewise(units) {
+		if (/^[\u0000-\u007f]*$/.test(units)) return units;
+		return decode(Uint8Array.from(units, (c) => c.charCodeAt(0)));
+	}
 	function ranges(spec) {
 		const parts = spec.split(",").map((part) => {
 			const match = part.match(/^(\d*)(-?)(\d*)$/);
@@ -4307,7 +5121,7 @@ var NanocodePython = (function(exports) {
 		const delimiter = last(parsed, "d") ?? "	";
 		if (delimiter.length !== 1) throw new CommandError("the delimiter must be a single character");
 		const output = last(parsed, "output-delimiter") ?? (fields ? delimiter : "");
-		const spans = !fields && !complement && output === "" ? merged(fields ?? chars) : void 0;
+		const spans = !fields && !complement ? merged(fields ?? chars) : void 0;
 		return await eachBatch(ctx, parsed.operands, (text) => {
 			const out = [];
 			for (const line of lines(text)) if (fields) {
@@ -4316,11 +5130,12 @@ var NanocodePython = (function(exports) {
 					continue;
 				}
 				out.push(line.split(delimiter).filter((_, index) => pick(index + 1)).join(output));
-			} else if (spans && !/[\uD800-\uDFFF]/.test(line)) {
-				let picked = "";
-				for (const [from, to] of spans) picked += line.slice(from - 1, to);
-				out.push(picked);
-			} else out.push([...line].filter((_, index) => pick(index + 1)).join(output));
+			} else {
+				const units = bytewise(line);
+				const between = bytewise(output);
+				const picked = spans ? spans.filter(([from]) => from <= units.length).map(([from, to]) => units.slice(from - 1, to)).join(between) : [...units].filter((_, index) => pick(index + 1)).join(between);
+				out.push(unbytewise(picked));
+			}
 			return put(ctx, joinLines(out));
 		});
 	});
@@ -4335,9 +5150,18 @@ var NanocodePython = (function(exports) {
 	};
 	CLASS_CHARS.alpha = CLASS_CHARS.lower + CLASS_CHARS.upper;
 	CLASS_CHARS.alnum = CLASS_CHARS.alpha + CLASS_CHARS.digit;
+	const TR_ESCAPES = {
+		a: "\x07",
+		b: "\b",
+		f: "\f",
+		n: "\n",
+		r: "\r",
+		t: "	",
+		v: "\v"
+	};
 	function trSet(spec) {
 		const out = [];
-		const [text] = escapes(spec);
+		const text = bytewise(spec.replace(/\\([0-7]{1,3}|[\s\S])/g, (_, body) => /^[0-7]/.test(body) ? byte(parseInt(body, 8)) : TR_ESCAPES[body] ?? body));
 		for (let i = 0; i < text.length; i++) {
 			const cls = text.slice(i).match(/^\[:(\w+):\]/);
 			if (cls && CLASS_CHARS[cls[1]]) {
@@ -4443,11 +5267,16 @@ var NanocodePython = (function(exports) {
 				const next = await ctx.stdin.readChars(1);
 				chunk += next;
 			}
-			await put(ctx, convert(chunk));
+			await put(ctx, unbytewise(convert(bytewise(chunk))));
 		}
 		return 0;
 	});
-	streaming(async (ctx) => await eachLine(ctx, ctx.args, (line) => /[\uD800-\uDFFF]/.test(line) ? [...line].reverse().join("") : line.split("").reverse().join("")));
+	streaming(async (ctx) => {
+		const end = ctx.args.indexOf("--");
+		const option = ctx.args.slice(0, end < 0 ? void 0 : end).find((arg) => arg.startsWith("-") && arg !== "-");
+		if (option !== void 0) throw new CommandError("invalid option -- '" + option[1] + "'\nTry 'rev --help' for more information.", 1);
+		return await eachLine(ctx, ctx.args.filter((_, index) => index !== end), (line) => /[\uD800-\uDFFF]/.test(line) ? [...line].reverse().join("") : line.split("").reverse().join(""));
+	});
 	streaming(async (ctx) => {
 		const parsed = options(ctx.args, {
 			values: "bwsvinh",
@@ -4519,7 +5348,7 @@ var NanocodePython = (function(exports) {
 			else if ((v = value(arg, "-n", "--max-args")) !== void 0) max = Number(v);
 			else if ((v = value(arg, "-L", "--max-lines")) !== void 0) maxLines = Number(v);
 			else if (arg === "-l") maxLines = 1;
-			else if ((v = value(arg, "-d", "--delimiter")) !== void 0) delimiter = escapes(v)[0];
+			else if ((v = value(arg, "-d", "--delimiter")) !== void 0) delimiter = escapes$1(v)[0];
 			else if ((v = value(arg, "-a", "--arg-file")) !== void 0) file = v;
 			else if ((v = value(arg, "-E", "--eof")) !== void 0) eof = v;
 			else if (arg.startsWith("-e")) eof = arg.slice(2) || void 0;
@@ -4689,7 +5518,8 @@ var NanocodePython = (function(exports) {
 					try {
 						bytes = await read(operand);
 					} catch (error) {
-						ctx.stderr.write(ctx.name + ": " + operand + ": " + (error instanceof FsError && error.code === "EISDIR" ? "Is a directory" : "No such file or directory") + "\n");
+						if (!(error instanceof FsError)) throw error;
+						ctx.stderr.write(ctx.name + ": " + readFailure(ctx, operand, error) + "\n");
 						status = 1;
 						continue;
 					}
@@ -4745,6 +5575,13 @@ var NanocodePython = (function(exports) {
 			}
 			return failed || unreadable || malformed && f.has("S") ? 1 : status;
 		};
+	}
+	const wide = /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6\u{1b000}-\u{1b2ff}\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u;
+	const narrowless = /[\p{Mn}\p{Me}\p{Cf}\p{Cc}\udc80-\udcff]/u;
+	function charWidth(c) {
+		if (c === "­") return 1;
+		if (narrowless.test(c)) return 0;
+		return wide.test(c) ? 2 : 1;
 	}
 	streaming((ctx) => headTail(ctx, false)), streaming((ctx) => headTail(ctx, true)), digest("SHA-256"), digest("SHA-1"), digest("SHA-512");
 	// src/bash/internal/commands/files.ts
@@ -4803,13 +5640,15 @@ var NanocodePython = (function(exports) {
 			const trailing = parts[parts.length - 1] === "";
 			if (trailing) parts.pop();
 			const out = [];
-			for (const part of parts) {
+			for (let i = 0; i < parts.length; i++) {
+				const part = parts[i];
 				if (parsed.flags.has("s") && part === "" && blank) continue;
 				blank = part === "";
 				const numbered = parsed.flags.has("b") ? part !== "" : parsed.flags.has("n");
-				out.push((numbered ? String(++line).padStart(6) + "	" : "") + part + (ends ? "$" : ""));
+				const ended = ends && (trailing || i < parts.length - 1);
+				out.push((numbered ? String(++line).padStart(6) + "	" : "") + (ended && part.endsWith("\r") ? part.slice(0, -1) + "^M" : part) + (ended ? "$" : ""));
 			}
-			return out.join("\n") + (trailing ? "\n" : "");
+			return out.join("\n") + (trailing && out.length ? "\n" : "");
 		};
 		let status = 0;
 		for (const operand of parsed.operands.length ? parsed.operands : ["-"]) {

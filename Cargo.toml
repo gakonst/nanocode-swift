@@ -19,7 +19,6 @@ bench = false
 [dependencies]
 nanocode = { path = "../nanocodex/crates/nanocode", default-features = false, features = ["local-cells"] }
 nanocode-code-mode = { path = "../nanocodex/crates/runtime/code-mode" }
-nanocode-store-sqlite = { path = "../nanocodex/crates/integrations/store-sqlite" }
 nanocode-sync = { path = "../nanocodex/crates/core/sync" }
 nanocode-process-contracts = { path = "../nanocodex/crates/core/process" }
 nanocode-tool-runtime = { path = "../nanocodex/crates/integrations/tool-runtime" }
@@ -37,6 +36,7 @@ libc = "0.2.186"
 rand = "0.9"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
 rquickjs = "0.14.0"
+rusqlite = { version = "0.38", features = ["bundled"] }
 wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "stable", "auto-dispatch"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }

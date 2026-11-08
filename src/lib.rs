@@ -15,6 +15,7 @@ mod runner;
 mod sandbox;
 mod session;
 mod shell;
+mod sqlite;
 mod tools;
 mod wallet;
 

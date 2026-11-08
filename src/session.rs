@@ -24,7 +24,6 @@ use nanocode::{
     },
 };
 use nanocode_code_mode::embedded::HostFuture;
-use nanocode_store_sqlite::SqliteSql;
 use nanocode_sync::Atom;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -34,6 +33,7 @@ use crate::{
     approvals::{Gate, Mode},
     bridge::Host,
     config::{Configuration, Fork, Provider, WorkspaceTools},
+    sqlite::SqliteSql,
 };
 
 #[derive(Clone)]
@@ -75,7 +75,7 @@ pub fn text(error: impl std::fmt::Display) -> String {
 
 pub struct Session {
     pub id: String,
-    pub inbox: TurnInbox<Shared>,
+    pub inbox: TurnInbox<SessionLog<Shared>>,
     pub model: ModelSelection,
     pub provider: Provider,
     wake: Notify,

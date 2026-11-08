@@ -352,9 +352,12 @@ pub async fn codex_client(
 ) -> Result<OpenAi, String> {
     let builder = match &config.auth {
         Auth::ApiKey(key) => {
-            let builder = OpenAi::builder(OpenAiAuth::api_key(key.as_str()))
-                .http_timeouts(CONNECT_TIMEOUT, IDLE_TIMEOUT)
+            let client = reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(IDLE_TIMEOUT)
+                .build()
                 .map_err(|error| error.to_string())?;
+            let builder = OpenAi::builder(OpenAiAuth::api_key(key.as_str())).http_client(client);
             match config.endpoint.as_deref() {
                 Some(base) => builder.api_base_url(base),
                 None => builder,

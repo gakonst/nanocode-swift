@@ -4,19 +4,20 @@ This repository is nanocode-swift (nanocodexyz/nanocode-swift): the nanocode Rus
 
 ## Rules
 
-These rules come from nanocodexyz/nanocode's `AGENTS.md` and apply to every change here.
+These principles come from nanocodexyz/nanocode's `AGENTS.md` and apply to every change here.
 
-- Do not add code comments, doc comments, or comment headers. Names, types, and this file carry what a reader needs. Only comments that a tool reads stay, such as `// swift-tools-version` in `Package.swift`.
-- Do not add tests, test targets, Cargo features, or test-only dependencies. Validate a change by building the XCFramework, `swift build`, the example apps with `xcodebuild`, and runs of `Examples/Console`, and record the commands and results here.
-- `README.md` is the repository's homepage: the overview, products, quickstart and the demo recordings in `assets/` (GIFs of the demo app made with the `-NanocodeType`, `-NanocodeWindow` and `-NanocodeAppearance` launch arguments, optimized with `gifsicle -O3 --lossy=60`). Development guidance belongs in this file.
-- Keep logs, traces, raw recordings, and scratch files in ignored `output/`. Never commit credentials or personal test data.
-- Record what a change establishes in this file: the behavior, the reason the code cannot show, and the commands, inputs, dates, and before and after measurements. Correct or remove the entries that the change makes stale, so this file stays a description of the current code.
-- The Rust side keeps state lock-free with `nanocode-sync` (`Atom`, `Slot`) as the SDK requires. Swift guards its small shared tables with `OSAllocatedUnfairLock`.
-- Prefer simple code and small changes. Preserve unrelated work.
-- Take every limit from a real platform or protocol constraint, a measured requirement, or explicit caller policy, and record its source here. Surface invalid states instead of hiding them with silent truncation, clamping, or fallback values.
-- Benchmark performance changes with reproducible commands and inputs, and report before and after results. Keep cold builds, incremental builds, and runtime performance separate.
-- Keep the development loop fast: build only what changed, reuse caches, and skip redundant checks. Honor requests to skip builds or CI.
-- Work in the main checkout on `main` and push each completed change to `main`. Do not create worktrees or feature branches. Commit only your own changes, leave other dirty or untracked files alone, and rebase onto `origin/main` when a push is rejected.
+- Keep code simple and changes small. Match the surrounding code and preserve unrelated work.
+- No code comments, doc comments, tests, test targets, test-only dependencies or Cargo features. Only comments that a tool reads stay, such as `// swift-tools-version` in `Package.swift`.
+- `README.md` is the repository's homepage: the overview, products, quickstart and the demo recordings in `assets/` (GIFs of the demo app made with the `-NanocodeType`, `-NanocodeWindow` and `-NanocodeAppearance` launch arguments, optimized with `gifsicle -O3 --lossy=60`).
+- No magic constants or arbitrary caps: a limit comes from a platform or protocol, a measurement or caller policy. Surface invalid states; never hide them with silent truncation, clamping or fallbacks.
+- Make invalid states unrepresentable: model a lifecycle as one enum whose variants carry only what that phase has.
+- Lock-free on the Rust side: no Mutex, RwLock or Condvar; use nanocode-sync (`Atom`, `Slot`) as the SDK does. Swift guards its small shared tables with `OSAllocatedUnfairLock`.
+- Preserve public APIs.
+- Inference, subagents and durability live in the brain; Code Mode runs on the user's machine. Never silently replay dispatched work: report uncertain outcomes.
+- Validate by building the XCFramework, `swift build`, the example apps with `xcodebuild` and runs of `Examples/Console`, and back performance changes with reproducible before/after measurements, keeping cold builds, incremental builds and runtime performance separate.
+- Check behavior with harnesses in ignored `output/`. Keep every artifact there; never commit them, credentials or personal data.
+- Work on `main` in the main checkout, commit only your own changes and push each one; no pull requests. There is no CI: build, release and deploy by hand. Use subagents only when asked.
+- This file holds principles only; history belongs in commit messages.
 
 ## Layout
 

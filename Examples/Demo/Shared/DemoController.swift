@@ -124,7 +124,7 @@ final class DemoController: KitViewController {
     case .cloudflare: "\(toolkit) app, durable agent in a [Cloudflare Durable Object](https://nanocode.xyz/cloudflare)"
     case .vercel: "\(toolkit) app, durable agent in [Vercel Functions](https://nanocode.xyz/vercel)"
     }
-    props.footer = "[\u{F8FF} on \(device)](https://nanocode.xyz) · \(kit) · \(agent) · built with [nanocode-swift](https://github.com/gakonst/nanocode-swift)"
+    props.footer = "[\u{F8FF} on \(device)](https://nanocode.xyz) · \(kit) · \(agent) · built with [nanocode-swift](https://github.com/nanocodexyz/nanocode-swift)"
     if account == nil || shownStyle != model.style {
       account = AccountRow(skin: skin) { [weak self] in self?.showSettings() }
     }

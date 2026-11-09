@@ -29,4 +29,4 @@ cp "$work/python.js" Sources/Nanocode/Resources/python.js
 cp "$work/bash.js" Sources/Nanocode/Resources/shell/bash.js
 cp "$work/src/wasm/prelude.js" Sources/Nanocode/Resources/shell/prelude.js
 cp "$work"/src/wasm/prelude/*.js Sources/Nanocode/Resources/shell/prelude/
-printf '{\n  "repository": "https://github.com/gakonst/nanocode-ts",\n  "branch": "%s",\n  "revision": "%s"%s\n}\n' "$branch" "$revision" "$modified" > ts-revision.json
+printf '{\n  "repository": "https://github.com/nanocodexyz/nanocode-ts",\n  "branch": "%s",\n  "revision": "%s"%s\n}\n' "$branch" "$revision" "$modified" > ts-revision.json

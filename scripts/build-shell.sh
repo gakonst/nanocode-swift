@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source=$(cd "${NANOCODE_TS:-../nanocode-ts}" && pwd)
-ref=${NANOCODE_TS_REF:-origin/main}
+ref=${NANOCODE_TS_REF:-origin/master}
 modified=""
 if [ "$ref" = worktree ]; then
   branch=$(git -C "$source" rev-parse --abbrev-ref HEAD)

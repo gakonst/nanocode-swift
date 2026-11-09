@@ -86,6 +86,7 @@ public final class HandMonitor {
   @ObservationIgnored private var poller: Task<Void, Never>?
   @ObservationIgnored private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
   @ObservationIgnored private var token: String?
+  @ObservationIgnored private var hand: String?
   @ObservationIgnored public let id: String
 
   public var running: Bool { state.running }
@@ -98,11 +99,11 @@ public final class HandMonitor {
       for await event in events {
         guard let self else { return }
         switch event {
-        case .hand(let hand, let event) where hand == self.id:
+        case .hand(let hand, let event) where hand == self.hand:
           if event["state"]?.string == "rejected", let token = self.token { RemoteSession.forgetHandToken(token) }
           if let dial = HandDial(event) { self.dial = dial }
           if let next = HandState(event) { self.move(next) }
-        case .handStopped(let hand, let error) where hand == self.id:
+        case .handStopped(let hand, let error) where hand == self.hand:
           self.move(.stopped(error: error))
           self.poller?.cancel()
         case .runner(let runner, let event) where runner == self.id:
@@ -117,7 +118,13 @@ public final class HandMonitor {
 
   public func start(_ configuration: HandConfiguration) async {
     var configuration = configuration
-    configuration.id = id
+    if let previous = hand {
+      hand = nil
+      try? await runtime.stopHand(previous)
+    }
+    let started = "\(id)#\(UUID().uuidString.prefix(8).lowercased())"
+    hand = started
+    configuration.id = started
     error = nil
     token = configuration.token
     do {
@@ -144,7 +151,10 @@ public final class HandMonitor {
   public func stop() async {
     poller?.cancel()
     try? await runtime.stopRunner(id)
-    try? await runtime.stopHand(id)
+    if let started = hand {
+      hand = nil
+      try? await runtime.stopHand(started)
+    }
     move(.idle)
     status = nil
   }
@@ -175,7 +185,7 @@ public final class HandMonitor {
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         guard let self, self.running else { return }
-        let status = try? await self.runtime.hands().first { $0.id == self.id }
+        let status = try? await self.runtime.hands().first { $0.id == self.hand }
         if status != self.status { self.status = status }
       }
     }

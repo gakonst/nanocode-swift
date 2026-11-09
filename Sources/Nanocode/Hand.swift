@@ -30,6 +30,25 @@ public struct HandStatus: Sendable, Hashable, Identifiable {
   }
 }
 
+public struct HandDial: Sendable, Hashable {
+  public let trustMs: Double
+  public let dnsMs: Double
+  public let tcpMs: Double
+  public let tlsMs: Double
+  public let upgradeMs: Double
+  public let totalMs: Double
+
+  init?(_ event: JSON) {
+    guard event["state"]?.string == "connected", let dial = event["dial"] else { return nil }
+    trustMs = dial["trust_ms"]?.number ?? 0
+    dnsMs = dial["dns_ms"]?.number ?? 0
+    tcpMs = dial["tcp_ms"]?.number ?? 0
+    tlsMs = dial["tls_ms"]?.number ?? 0
+    upgradeMs = dial["upgrade_ms"]?.number ?? 0
+    totalMs = event["dial_ms"]?.number ?? trustMs + dnsMs + tcpMs + tlsMs + upgradeMs
+  }
+}
+
 public enum HandState: Sendable, Hashable {
   case idle
   case connecting

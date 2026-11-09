@@ -79,11 +79,13 @@ public final class WalletMonitor {
 public final class HandMonitor {
   public private(set) var state: HandState = .idle
   public private(set) var status: HandStatus?
+  public private(set) var dial: HandDial?
   public var error: String?
   @ObservationIgnored private let runtime: NanocodeRuntime
   @ObservationIgnored private var listener: Task<Void, Never>?
   @ObservationIgnored private var poller: Task<Void, Never>?
   @ObservationIgnored private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+  @ObservationIgnored private var token: String?
   @ObservationIgnored public let id: String
 
   public var running: Bool { state.running }
@@ -97,6 +99,8 @@ public final class HandMonitor {
         guard let self else { return }
         switch event {
         case .hand(let hand, let event) where hand == self.id:
+          if event["state"]?.string == "rejected", let token = self.token { RemoteSession.forgetHandToken(token) }
+          if let dial = HandDial(event) { self.dial = dial }
           if let next = HandState(event) { self.move(next) }
         case .handStopped(let hand, let error) where hand == self.id:
           self.move(.stopped(error: error))
@@ -115,6 +119,7 @@ public final class HandMonitor {
     var configuration = configuration
     configuration.id = id
     error = nil
+    token = configuration.token
     do {
       status = try await runtime.startHand(configuration)
       move(.connecting)
@@ -170,7 +175,8 @@ public final class HandMonitor {
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         guard let self, self.running else { return }
-        self.status = try? await self.runtime.hands().first { $0.id == self.id }
+        let status = try? await self.runtime.hands().first { $0.id == self.id }
+        if status != self.status { self.status = status }
       }
     }
   }

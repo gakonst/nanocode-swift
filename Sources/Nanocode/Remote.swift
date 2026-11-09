@@ -220,20 +220,29 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     var running = false
     var stopped: Set<String> = []
     var saved = Date.distantPast
+    var streams: [String: Task<JSON?, Error>] = [:]
+    var settled: [String: JSON] = [:]
+    var unadmitted: Set<String> = []
+    var posting: String?
   }
 
   private let state: OSAllocatedUnfairLock<State>
-  private let http: URLSession
+  private var http: URLSession { Self.http }
+
+  private static let http: URLSession = {
+    let configuration = URLSessionConfiguration.default
+    configuration.timeoutIntervalForRequest = 300
+    configuration.timeoutIntervalForResource = 24 * 60 * 60
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    return URLSession(configuration: configuration)
+  }()
+
+  private static let handTokens = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
   public init(server: RemoteServer, store: RemoteStore, conversation: RemoteConversation) {
     self.server = server
     self.store = store
     state = OSAllocatedUnfairLock(uncheckedState: State(record: conversation))
-    let configuration = URLSessionConfiguration.default
-    configuration.timeoutIntervalForRequest = 300
-    configuration.timeoutIntervalForResource = 24 * 60 * 60
-    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-    http = URLSession(configuration: configuration)
   }
 
   public static func create(server: RemoteServer, store: RemoteStore, provider: Provider, model: String,
@@ -317,13 +326,25 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
 
   public func replay() async throws -> [SessionEvent] {
     var events: [SessionEvent] = []
+    var logged: [LoggedEvent] = []
+    var live: [LiveEvent] = []
     for line in store.lines(record.id) {
-      if let logged = line["logged"].flatMap(LoggedEvent.init) {
-        if case .logged(let list) = events.last { events[events.count - 1] = .logged(list + [logged]) } else { events.append(.logged([logged])) }
-      } else if let live = line["live"].flatMap(LiveEvent.init(json:)) {
-        if case .events(let list) = events.last { events[events.count - 1] = .events(list + [live]) } else { events.append(.events([live])) }
+      if let event = line["logged"].flatMap(LoggedEvent.init) {
+        if !live.isEmpty {
+          events.append(.events(live))
+          live = []
+        }
+        logged.append(event)
+      } else if let event = line["live"].flatMap(LiveEvent.init(json:)) {
+        if !logged.isEmpty {
+          events.append(.logged(logged))
+          logged = []
+        }
+        live.append(event)
       }
     }
+    if !logged.isEmpty { events.append(.logged(logged)) }
+    if !live.isEmpty { events.append(.events(live)) }
     return events
   }
 
@@ -370,21 +391,61 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
 
   public func stopTurn(_ requestID: String) async throws {
     let open = record.open ?? requestID
-    state.withLock { state in
+    let dropped = state.withLock { state -> [String] in
+      let dropped = state.queue.map(\.requestID).filter { $0 != open }
       state.queue.removeAll()
       state.stopped.insert(open)
+      return dropped
     }
-    let request: URLRequest
+    for request in dropped { emit(.turn(["report": ["request_id": .string(request), "status": "cancelled"]])) }
     switch server.kind {
     case .cloudflare:
-      let encoded = open.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? open
-      request = post(cloudflareURL("turns/\(encoded)/cancel"), [:])
+      let (data, response) = try await cancel(open)
+      switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+      case 202:
+        return
+      case 200..<300:
+        settle(open, (try? JSON.parse(data)).flatMap { $0["status"] == nil ? nil : $0 } ?? ["status": "cancelled"])
+      case 404:
+        if state.withLock({ $0.posting == open }) {
+          _ = state.withLock { $0.unadmitted.insert(open) }
+        } else {
+          settle(open, ["status": "cancelled", "error": .string("the deployment has no turn \(open)")])
+        }
+      default:
+        throw NanocodeError(failure(data, response))
+      }
     case .vercel:
       guard let session = record.session else { return }
-      request = post(server.url, ["kind": "cancel", "sessionId": .string(session)])
+      let request = post(server.url, ["kind": "cancel", "sessionId": .string(session)])
+      let (data, response) = try await retrying { try await self.http.data(for: request) }
+      guard ((response as? HTTPURLResponse)?.statusCode ?? 0) < 300 else { throw NanocodeError(failure(data, response)) }
     }
-    let (data, response) = try await retrying { try await self.http.data(for: request) }
-    guard ((response as? HTTPURLResponse)?.statusCode ?? 0) < 300 else { throw NanocodeError(failure(data, response)) }
+  }
+
+  private func cancel(_ requestID: String) async throws -> (Data, URLResponse) {
+    let encoded = requestID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? requestID
+    let request = post(cloudflareURL("turns/\(encoded)/cancel"), [:])
+    return try await retrying { try await self.http.data(for: request) }
+  }
+
+  private func settle(_ requestID: String, _ report: JSON) {
+    let (active, task) = state.withLock { state -> (Bool, Task<JSON?, Error>?) in
+      guard state.running, state.record.open == requestID else { return (false, nil) }
+      state.settled[requestID] = report
+      return (true, state.streams[requestID])
+    }
+    if active {
+      task?.cancel()
+    } else {
+      var object = report.object ?? [:]
+      object["request_id"] = .string(requestID)
+      emit(.turn(["report": .object(object)]))
+    }
+  }
+
+  private func settled(_ requestID: String) -> JSON? {
+    state.withLock { $0.settled.removeValue(forKey: requestID) }
   }
 
   private static let controlRetries = 2
@@ -432,16 +493,27 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     guard server.kind == .cloudflare else {
       throw NanocodeError("only the Cloudflare deployment takes this device as a hand")
     }
-    var request = URLRequest(url: cloudflareURL("hands"))
-    request.httpMethod = "POST"
-    headers(&request)
-    let (data, response) = try await http.data(for: request)
-    guard ((response as? HTTPURLResponse)?.statusCode ?? 0) < 300, let token = (try JSON.parse(data))["token"]?.string else {
-      throw NanocodeError(failure(data, response))
+    let key = cloudflareURL("hands").absoluteString
+    var token = Self.handTokens.withLock { $0[key] }
+    if token == nil {
+      var request = URLRequest(url: cloudflareURL("hands"))
+      request.httpMethod = "POST"
+      headers(&request)
+      let (data, response) = try await http.data(for: request)
+      guard ((response as? HTTPURLResponse)?.statusCode ?? 0) < 300, let minted = (try JSON.parse(data))["token"]?.string else {
+        throw NanocodeError(failure(data, response))
+      }
+      Self.handTokens.withLock { $0[key] = minted }
+      token = minted
     }
+    guard let token else { throw NanocodeError("the deployment issued no hand token") }
     var components = URLComponents(url: cloudflareURL("hands/\(name)"), resolvingAgainstBaseURL: false)!
     components.scheme = components.scheme == "http" ? "ws" : "wss"
     return (components.url!, token)
+  }
+
+  public static func forgetHandToken(_ token: String) {
+    handTokens.withLock { tokens in tokens = tokens.filter { $0.value != token } }
   }
 
   public func attachedHands() async -> [String] {
@@ -485,7 +557,11 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
   }
 
   private func finish(_ requestID: String, _ report: JSON) {
-    _ = state.withLock { $0.stopped.remove(requestID) }
+    state.withLock { state in
+      state.stopped.remove(requestID)
+      state.settled[requestID] = nil
+      state.unadmitted.remove(requestID)
+    }
     mutate(save: true) { record in
       if record.open == requestID { record.open = nil }
       record.updatedAt = Date()
@@ -553,13 +629,17 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     if !images.isEmpty { body["images"] = .array(images) }
     if let thinking = record.thinking { body["thinking"] = .string(thinking) }
     if let hand = record.hand { body["hand"] = .string(hand) }
-    var delay = 1.0
+    var delay = 0.5
+    state.withLock { $0.posting = next.requestID }
+    defer { state.withLock { $0.posting = nil } }
     while !Task.isCancelled, !state.withLock({ $0.stopped.contains(next.requestID) }) {
       var request = post(URL(string: cloudflareURL("turns").absoluteString + "?live=1&after=\(record.cursor ?? "0")")!,
                          .object(body), stream: true)
       request.timeoutInterval = 300
       do {
         if let report = try await follow(request, next.requestID) { return report }
+        if let report = settled(next.requestID) { return report }
+        state.withLock { $0.posting = nil }
         return await reconnect(next.requestID)
       } catch let error as NanocodeError {
         throw error
@@ -568,13 +648,27 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
       } catch {
         delay = min(delay * 2, 15)
       }
+      if let report = settled(next.requestID) { return report }
+      if state.withLock({ $0.stopped.contains(next.requestID) }) { break }
       emit(.waiting(requestID: next.requestID, retryMs: delay * 1000))
       try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
     }
-    return ["status": "cancelled"]
+    if state.withLock({ $0.unadmitted.remove(next.requestID) != nil }) { _ = try? await cancel(next.requestID) }
+    return settled(next.requestID) ?? ["status": "cancelled"]
   }
 
   private func follow(_ request: URLRequest, _ requestID: String) async throws -> JSON? {
+    let reading = Task { try await self.read(request, requestID) }
+    let done = state.withLock { state -> Bool in
+      state.streams[requestID] = reading
+      return state.settled[requestID] != nil
+    }
+    defer { state.withLock { state in if state.streams[requestID] == reading { state.streams[requestID] = nil } } }
+    if done { reading.cancel() }
+    return try await withTaskCancellationHandler { try await reading.value } onCancel: { reading.cancel() }
+  }
+
+  private func read(_ request: URLRequest, _ requestID: String) async throws -> JSON? {
     let (bytes, response) = try await http.bytes(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard (200..<300).contains(status) else {
@@ -598,6 +692,9 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
         emit(.logged([logged]))
       } else {
         emit(.live([logged]))
+      }
+      if logged.requestID == requestID, state.withLock({ $0.unadmitted.remove(requestID) != nil }) {
+        Task { [weak self] in _ = try? await self?.cancel(requestID) }
       }
       let body = logged.event
       guard body["source"] == nil || body["source"]?.isNull == true, logged.requestID == requestID else { continue }
@@ -639,14 +736,17 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
   }
 
   private func reconnect(_ requestID: String) async -> JSON {
-    var delay = 1.0
+    var delay = 0.5
     while !Task.isCancelled {
+      if let report = settled(requestID) { return report }
       let request: URLRequest
+      var check: Task<Void, Never>?
       switch server.kind {
       case .cloudflare:
         var get = URLRequest(url: URL(string: cloudflareURL("events").absoluteString + "?live=1&after=\(record.cursor ?? "0")")!)
         headers(&get, stream: true)
         request = get
+        check = Task { [weak self] in await self?.check(requestID) }
       case .vercel:
         let cursor = record.cursor ?? "0.0"
         guard let session = record.session, !cursor.hasSuffix(";end") else { return ["status": "completed"] }
@@ -655,15 +755,24 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
         request = get
       }
       do {
-        if let report = try await follow(request, requestID) { return report }
+        if let report = try await follow(request, requestID) {
+          check?.cancel()
+          return report
+        }
         delay = 1
       } catch let retry as Retry {
         delay = retry.after ?? min(delay * 2, 15)
       } catch let error as NanocodeError {
+        check?.cancel()
         emit(.failure(error.localizedDescription))
         return ["status": "failed", "error": .string(error.localizedDescription)]
       } catch {
         delay = min(delay * 2, 15)
+      }
+      check?.cancel()
+      if let report = settled(requestID) {
+        await catchUp(force: true)
+        return report
       }
       emit(.waiting(requestID: requestID, retryMs: delay * 1000))
       try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -671,8 +780,20 @@ public final class RemoteSession: ChatBackend, @unchecked Sendable {
     return ["status": "cancelled"]
   }
 
-  private func catchUp() async {
-    guard server.kind == .cloudflare, record.session != nil else { return }
+  private func check(_ requestID: String) async {
+    let encoded = requestID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? requestID
+    var request = URLRequest(url: cloudflareURL("turns/\(encoded)"))
+    headers(&request)
+    guard let (data, response) = try? await http.data(for: request), (response as? HTTPURLResponse)?.statusCode == 200,
+          let report = try? JSON.parse(data), let status = report["status"]?.string,
+          Self.finished.contains(status) else { return }
+    settle(requestID, report)
+  }
+
+  private static let finished: Set<String> = ["completed", "failed", "cancelled"]
+
+  private func catchUp(force: Bool = false) async {
+    guard server.kind == .cloudflare, force || record.session != nil else { return }
     while true {
       var request = URLRequest(url: URL(string: cloudflareURL("events").absoluteString + "?after=\(record.cursor ?? "0")&limit=500")!)
       headers(&request)

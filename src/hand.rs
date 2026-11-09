@@ -120,9 +120,18 @@ pub fn workspace_tools(
 fn event(event: HandEvent) -> Value {
     match event {
         HandEvent::Connecting { endpoint } => json!({"state": "connecting", "endpoint": endpoint}),
-        HandEvent::Connected { endpoint, dialed } => {
-            json!({"state": "connected", "endpoint": endpoint, "dial_ms": dialed.total().as_millis()})
-        }
+        HandEvent::Connected { endpoint, dialed } => json!({
+            "state": "connected",
+            "endpoint": endpoint,
+            "dial_ms": dialed.total().as_millis(),
+            "dial": {
+                "trust_ms": dialed.trust.as_millis(),
+                "dns_ms": dialed.dns.as_millis(),
+                "tcp_ms": dialed.tcp.as_millis(),
+                "tls_ms": dialed.tls.as_millis(),
+                "upgrade_ms": dialed.upgrade.as_millis(),
+            },
+        }),
         HandEvent::Moving { endpoint } => json!({"state": "moving", "endpoint": endpoint}),
         HandEvent::Unconfirmed { status, retry } => {
             json!({"state": "unconfirmed", "status": status, "retry_ms": retry.as_millis()})

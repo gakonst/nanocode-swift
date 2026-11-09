@@ -256,7 +256,14 @@ pub async fn connect(host: &Host, meta: Meta) -> Result<Value, String> {
             }
         };
         let status = polled.status();
-        let body: Value = polled.json().await.unwrap_or(Value::Null);
+        let body: Value = match polled.json().await {
+            Ok(body) => body,
+            Err(error) if status.is_success() => {
+                failure = Some(format!("reading Tempo Wallet's answer failed: {error}"));
+                continue;
+            }
+            Err(_) => Value::Null,
+        };
         if status.is_success() {
             break body;
         }

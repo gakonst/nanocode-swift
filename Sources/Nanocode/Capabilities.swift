@@ -56,8 +56,12 @@ extension Router {
       let reply: JSON
       switch body["op"]?.string {
       case "list":
-        var permissions: [String: JSON] = [:]
-        for capability in capabilities { permissions[capability.name] = .string(await capability.permission().rawValue) }
+        let permissions = await withTaskGroup(of: (String, HandPermission).self) { group in
+          for capability in capabilities { group.addTask { (capability.name, await capability.permission()) } }
+          var permissions: [String: JSON] = [:]
+          for await (name, permission) in group { permissions[name] = .string(permission.rawValue) }
+          return permissions
+        }
         reply = ["id": .number(Double(id)), "ok": .object(permissions)]
       case "request":
         let name = body["name"]?.string ?? ""

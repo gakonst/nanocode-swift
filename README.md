@@ -1,6 +1,6 @@
 # nanocode-swift
 
-The [nanocode](https://nanocode.xyz) agent SDK on Apple platforms: Claude and Codex agents that run natively inside a macOS or iOS app, with durable sessions in a local SQLite file, Code Mode cells in an embedded QuickJS, the SDK's workspace tools (on iOS, where apps cannot start processes, over [nanocode-ts](https://github.com/gakonst/nanocode-ts)'s simulated bash on the app's real files, with WebAssembly and WASI programs on an embedded wasmi, and Python with pip, numpy, pandas and matplotlib on Pyodide in a hidden web view), device tools, hands and runners, and models and tools paid per request from a Tempo Wallet over MPP. It is the Swift sibling of [nanocode-ts](https://github.com/gakonst/nanocode-ts): the same SDK, compiled into a static library instead of WebAssembly, with its UI written in AppKit and UIKit.
+The [nanocode](https://nanocode.xyz) agent SDK on Apple platforms: Claude and Codex agents that run natively inside a macOS or iOS app, with durable sessions in a local SQLite file, Code Mode cells in an embedded QuickJS, the SDK's workspace tools (on iOS, where apps cannot start processes, over [nanocode-ts](https://github.com/nanocodexyz/nanocode-ts)'s simulated bash on the app's real files, with WebAssembly and WASI programs on an embedded wasmi, and Python with pip, numpy, pandas and matplotlib on Pyodide in a hidden web view), device tools, hands and runners, and models and tools paid per request from a Tempo Wallet over MPP. It is the Swift sibling of [nanocode-ts](https://github.com/nanocodexyz/nanocode-ts): the same SDK, compiled into a static library instead of WebAssembly, with its UI written in AppKit and UIKit.
 
 <table>
   <tr>
@@ -82,7 +82,7 @@ With no API key configured, sessions pay through the connected Tempo Wallet (`Wa
 
 ## Building the library
 
-`scripts/build-ffi.sh` builds the Rust crate in `src/` against the SDK at `sdk-revision.json` (a checkout of [nanocodex](https://github.com/gakonst/nanocodex) beside this one) and writes `build/NanocodeFFI.xcframework`, which the package then uses instead of the release.
+`scripts/build-ffi.sh` builds the Rust crate in `src/` against the SDK at `sdk-revision.json` (a checkout of [nanocodex](https://github.com/nanocodexyz/nanocode) beside this one) and writes `build/NanocodeFFI.xcframework`, which the package then uses instead of the release.
 
 ## License
 

@@ -17,6 +17,7 @@ use crate::{bridge::Host, payments::Payments};
 const DEVICE: &str = "https://wallet.tempo.xyz/api/auth/device";
 const ALLOWANCE: u128 = 2_000_000;
 const FEE_ALLOWANCE: u128 = 100_000;
+const PATH_USD: &str = "0x20c0000000000000000000000000000000000000";
 const LIFETIME: Duration = Duration::from_secs(86_400);
 const ESCROW: &str = "0x4d50500000000000000000000000000000000000";
 const SWAPPER: &str = "0xF72E5107c32C655ffA7539a3C8e97B7C3cE16A3F";
@@ -158,6 +159,7 @@ pub async fn connect(host: &Host, meta: Meta) -> Result<Value, String> {
         "limits": [
             {"limit": quantity(ALLOWANCE), "token": machine},
             {"limit": quantity(FEE_ALLOWANCE), "token": USDC.to_lowercase()},
+            {"limit": quantity(FEE_ALLOWANCE), "token": PATH_USD},
         ],
         "publicKey": hex(public.as_bytes()),
         "scopes": scopes,

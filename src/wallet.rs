@@ -226,14 +226,18 @@ pub async fn connect(host: &Host, meta: Meta) -> Result<Value, String> {
         "expires_in": body.get("expires_in").and_then(Value::as_u64).unwrap_or(600),
     }}}));
     let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let mut failure: Option<String> = None;
     let envelope = loop {
         if tokio::time::Instant::now() >= deadline {
-            return Err(format!(
-                "Timed out waiting for approval of code {user_code}."
-            ));
+            return Err(match failure {
+                Some(failure) => format!(
+                    "Timed out waiting for approval of code {user_code}; polling Tempo Wallet last failed: {failure}"
+                ),
+                None => format!("Timed out waiting for approval of code {user_code}."),
+            });
         }
         tokio::time::sleep(interval).await;
-        let polled = client
+        let polled = match client
             .post(format!("{DEVICE}/token"))
             .json(&json!({
                 "code_verifier": verifier,
@@ -242,11 +246,21 @@ pub async fn connect(host: &Host, meta: Meta) -> Result<Value, String> {
             }))
             .send()
             .await
-            .map_err(|error| format!("polling Tempo Wallet failed: {error}"))?;
+        {
+            Ok(polled) => polled,
+            Err(error) => {
+                failure = Some(error.to_string());
+                continue;
+            }
+        };
         let status = polled.status();
         let body: Value = polled.json().await.unwrap_or(Value::Null);
         if status.is_success() {
             break body;
+        }
+        if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            failure = Some(format!("Tempo Wallet answered {status}: {}", description(&body)));
+            continue;
         }
         match error_of(&body) {
             Some("authorization_pending") => {}

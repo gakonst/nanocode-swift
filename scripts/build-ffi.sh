@@ -7,7 +7,7 @@ flags=(--locked --lib)
 directory=release
 case "$profile" in
   debug) directory=debug ;;
-  release) flags+=(--release) ;;
+  release) flags+=(--profile dist); directory=dist ;;
   fast)
     flags+=(--release)
     for setting in opt-level=1 codegen-units=256 incremental=true; do

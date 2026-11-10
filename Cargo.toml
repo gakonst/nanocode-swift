@@ -66,3 +66,27 @@ codegen-units = 1
 
 [profile.release.package.wasmi_ir]
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+
+[profile.dist.package.rquickjs-sys]
+opt-level = 3
+
+[profile.dist.package.wasmi]
+opt-level = 3
+
+[profile.dist.package.wasmi_core]
+opt-level = 3
+
+[profile.dist.package.wasmi_ir]
+opt-level = 3
+
+[profile.dist.package.miniz_oxide]
+opt-level = 3
+
+[profile.dist.package.sha2]
+opt-level = 3
